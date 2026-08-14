@@ -1,0 +1,18 @@
+<Project>
+  <PropertyGroup>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <AnalysisLevel>latest</AnalysisLevel>
+
+    <!-- Without these, MSBuild falls back to the assembly name, so the client
+         exe reports its publisher as "BarcodePrinter.Wpf" — which is what a
+         workstation user is shown in the SmartScreen prompt and in Add/Remove
+         Programs. Matches the Publisher that Install-Client.ps1 registers. -->
+    <Company>Barcode Label Printing</Company>
+    <Product>Barcode Label Printing</Product>
+    <Copyright>Copyright © 2026</Copyright>
+    <RunSettingsFilePath>$(MSBuildThisFileDirectory)tests/test.runsettings</RunSettingsFilePath>
+  </PropertyGroup>
+</Project>

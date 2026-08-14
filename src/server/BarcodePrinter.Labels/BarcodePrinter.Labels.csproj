@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Blueprint structural rule #1: this project must NEVER reference WPF,
+       WinForms or System.Drawing. It renders on the server. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\shared\BarcodePrinter.Contracts\BarcodePrinter.Contracts.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="BarcodePrinter.Labels.Tests" />
+  </ItemGroup>
+</Project>

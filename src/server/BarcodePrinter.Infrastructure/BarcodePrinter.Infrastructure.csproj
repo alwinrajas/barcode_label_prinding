@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\BarcodePrinter.Application\BarcodePrinter.Application.csproj" />
+    <ProjectReference Include="..\BarcodePrinter.Labels\BarcodePrinter.Labels.csproj" />
+    <ProjectReference Include="..\BarcodePrinter.Printing.Abstractions\BarcodePrinter.Printing.Abstractions.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore" />
+    <PackageReference Include="Pomelo.EntityFrameworkCore.MySql" />
+    <PackageReference Include="MySqlConnector" />
+    <PackageReference Include="Dapper" />
+    <PackageReference Include="Microsoft.Extensions.Identity.Core" />
+    <PackageReference Include="Microsoft.Extensions.Caching.Memory" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" />
+    <PackageReference Include="SkiaSharp" />
+    <PackageReference Include="ZXing.Net.Bindings.SkiaSharp" />
+    <PackageReference Include="MiniExcel" />
+    <PackageReference Include="ClosedXML" />
+  </ItemGroup>
+</Project>

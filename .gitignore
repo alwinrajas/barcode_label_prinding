@@ -1,0 +1,39 @@
+## Ignore Visual Studio / .NET build outputs
+bin/
+obj/
+out/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+TestResults/
+
+## Visual Studio & IDE temporary files
+.vs/
+.idea/
+.vscode/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.userprefs
+*.launch
+
+## Build artifacts & local publish directories
+artifacts/api/
+artifacts/client/
+artifacts/migrator/
+artifacts/build-info.json
+
+## Sensitive configuration & Environment files
+*.env
+*.user.config
+appsettings.Development.local.json
+appsettings.Local.json
+C:\ProgramData\MySQL\backup.cnf
+
+## OS generated files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.DS_Store

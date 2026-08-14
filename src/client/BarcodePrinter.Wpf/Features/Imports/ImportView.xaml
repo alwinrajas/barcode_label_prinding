@@ -1,0 +1,140 @@
+<UserControl x:Class="BarcodePrinter.Wpf.Features.Imports.ImportView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Background="{StaticResource Surface.Base}">
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Margin="24" MaxWidth="900" HorizontalAlignment="Left">
+
+            <DockPanel LastChildFill="False">
+                <TextBlock DockPanel.Dock="Left" Style="{StaticResource Text.H1}"
+                           Text="Excel Import" VerticalAlignment="Center" />
+                <Button DockPanel.Dock="Right" Height="36" Padding="14,0"
+                        Content="Export products…" Command="{Binding ExportProductsCommand}" />
+                <Button DockPanel.Dock="Right" Height="36" Padding="14,0" Margin="0,0,8,0"
+                        Content="Download template…" Command="{Binding DownloadTemplateCommand}" />
+            </DockPanel>
+
+            <!-- Upload -->
+            <Border Style="{StaticResource Card}" Margin="0,16,0,0">
+                <StackPanel>
+                    <TextBlock Style="{StaticResource Text.Body}" TextWrapping="Wrap"
+                               Text="Upload a filled-in template (.xlsx). The server validates every row, imports in bulk, and reports anything it could not accept. Up to 20,000+ rows per file." />
+                    <StackPanel Orientation="Horizontal" Margin="0,16,0,0">
+                        <Button Style="{StaticResource Button.Primary}" Content="⇪  Choose file and import…"
+                                Command="{Binding UploadCommand}"
+                                IsEnabled="{Binding IsRunning, Converter={StaticResource InverseBool}}" />
+                        <Button Margin="12,0,0,0" Height="40" Padding="16,0" Content="Cancel"
+                                Command="{Binding CancelCurrentCommand}"
+                                Visibility="{Binding IsRunning, Converter={StaticResource BoolToVisibility}}" />
+                    </StackPanel>
+                    <TextBlock Margin="0,10,0,0" Style="{StaticResource Text.Caption}"
+                               Foreground="{StaticResource Accent.Info}"
+                               Text="{Binding StatusMessage}" TextWrapping="Wrap"
+                               Visibility="{Binding StatusMessage, Converter={StaticResource NullToCollapsed}}" />
+                </StackPanel>
+            </Border>
+
+            <!-- Progress / result -->
+            <Border Style="{StaticResource Card}" Margin="0,16,0,0"
+                    Visibility="{Binding Current, Converter={StaticResource NullToCollapsed}}">
+                <StackPanel>
+                    <DockPanel LastChildFill="False">
+                        <TextBlock DockPanel.Dock="Left" Style="{StaticResource Text.Body}"
+                                   FontWeight="SemiBold" Text="{Binding Current.FileName}" />
+                        <Border DockPanel.Dock="Right" CornerRadius="10" Padding="10,3">
+                            <Border.Style>
+                                <Style TargetType="Border">
+                                    <Setter Property="Background" Value="{StaticResource Status.Printing}" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding Current.Status}" Value="Completed">
+                                            <Setter Property="Background" Value="{StaticResource Status.Completed}" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding Current.Status}" Value="Failed">
+                                            <Setter Property="Background" Value="{StaticResource Status.Failed}" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding Current.Status}" Value="Cancelled">
+                                            <Setter Property="Background" Value="{StaticResource Text.Secondary}" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Border.Style>
+                            <TextBlock Text="{Binding Current.Status}" Foreground="White"
+                                       FontSize="12" FontWeight="SemiBold" />
+                        </Border>
+                    </DockPanel>
+
+                    <ProgressBar Height="6" Margin="0,12,0,0" BorderThickness="0"
+                                 Foreground="{StaticResource Brand.Primary}"
+                                 Background="{StaticResource Surface.Sunken}"
+                                 IsIndeterminate="{Binding IsRunning}" />
+
+                    <UniformGrid Columns="5" Margin="0,16,0,0">
+                        <StackPanel>
+                            <TextBlock Style="{StaticResource Text.Caption}" Text="Rows" />
+                            <TextBlock Style="{StaticResource Text.H1}"
+                                       Text="{Binding Current.ProcessedRows, StringFormat=N0}" />
+                        </StackPanel>
+                        <StackPanel>
+                            <TextBlock Style="{StaticResource Text.Caption}" Text="Valid" />
+                            <TextBlock Style="{StaticResource Text.H1}"
+                                       Text="{Binding Current.ValidRows, StringFormat=N0}" />
+                        </StackPanel>
+                        <StackPanel>
+                            <TextBlock Style="{StaticResource Text.Caption}" Text="Errors" />
+                            <TextBlock Style="{StaticResource Text.H1}"
+                                       Foreground="{StaticResource Accent.Danger}"
+                                       Text="{Binding Current.InvalidRows, StringFormat=N0}" />
+                        </StackPanel>
+                        <StackPanel>
+                            <TextBlock Style="{StaticResource Text.Caption}" Text="Inserted" />
+                            <TextBlock Style="{StaticResource Text.H1}"
+                                       Foreground="{StaticResource Accent.Success}"
+                                       Text="{Binding Current.InsertedRows, StringFormat=N0}" />
+                        </StackPanel>
+                        <StackPanel>
+                            <TextBlock Style="{StaticResource Text.Caption}" Text="Updated" />
+                            <TextBlock Style="{StaticResource Text.H1}"
+                                       Foreground="{StaticResource Accent.Info}"
+                                       Text="{Binding Current.UpdatedRows, StringFormat=N0}" />
+                        </StackPanel>
+                    </UniformGrid>
+
+                    <TextBlock Margin="0,12,0,0" Style="{StaticResource Text.Body}"
+                               Foreground="{StaticResource Accent.Danger}" TextWrapping="Wrap"
+                               Text="{Binding Current.ErrorMessage}"
+                               Visibility="{Binding Current.ErrorMessage, Converter={StaticResource NullToCollapsed}}" />
+
+                    <Button Margin="0,12,0,0" Height="36" Padding="14,0" HorizontalAlignment="Left"
+                            Content="Download error report…" Command="{Binding DownloadErrorsCommand}"
+                            Visibility="{Binding CurrentHasErrors, Converter={StaticResource BoolToVisibility}}" />
+                </StackPanel>
+            </Border>
+
+            <!-- Recent -->
+            <TextBlock Style="{StaticResource Text.Label}" Margin="0,24,0,8" Text="RECENT IMPORTS" />
+            <ItemsControl ItemsSource="{Binding Recent}">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Border Background="{StaticResource Surface.Card}"
+                                BorderBrush="{StaticResource Border.Default}" BorderThickness="1"
+                                CornerRadius="6" Padding="12,8" Margin="0,0,0,6">
+                            <DockPanel LastChildFill="False">
+                                <TextBlock DockPanel.Dock="Left" Style="{StaticResource Text.Body}">
+                                    <Run Text="{Binding FileName, Mode=OneWay}" FontWeight="SemiBold" />
+                                    <Run Text="{Binding UploadedAtUtc, Mode=OneWay, StringFormat=· {0:dd/MM/yyyy HH:mm}}"
+                                         Foreground="{StaticResource Text.Secondary}" />
+                                </TextBlock>
+                                <TextBlock DockPanel.Dock="Right" Style="{StaticResource Text.Caption}"
+                                           VerticalAlignment="Center">
+                                    <Run Text="{Binding Status, Mode=OneWay}" FontWeight="SemiBold" />
+                                    <Run Text="{Binding TotalRows, Mode=OneWay, StringFormat=· {0:N0} rows}" />
+                                    <Run Text="{Binding InvalidRows, Mode=OneWay, StringFormat=· {0:N0} errors}" />
+                                </TextBlock>
+                            </DockPanel>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

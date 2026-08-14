@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RunSettings>
+  <!-- Run test ASSEMBLIES sequentially: the integration suite owns a MySQL
+       Testcontainer, and parallel assembly execution under full-solution runs
+       creates enough machine load that container connections time out
+       mid-suite. Within-assembly parallelism is unaffected. -->
+  <RunConfiguration>
+    <MaxCpuCount>1</MaxCpuCount>
+  </RunConfiguration>
+</RunSettings>

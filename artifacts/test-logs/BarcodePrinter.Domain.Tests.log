@@ -1,0 +1,9 @@
+  Determining projects to restore...
+  All projects are up-to-date for restore.
+  BarcodePrinter.Domain -> D:\Office\Projects\Barcode Printer\Barcode Printer\src\server\BarcodePrinter.Domain\bin\Release\net10.0\BarcodePrinter.Domain.dll
+  BarcodePrinter.Domain.Tests -> D:\Office\Projects\Barcode Printer\Barcode Printer\tests\BarcodePrinter.Domain.Tests\bin\Release\net10.0\BarcodePrinter.Domain.Tests.dll
+Test run for D:\Office\Projects\Barcode Printer\Barcode Printer\tests\BarcodePrinter.Domain.Tests\bin\Release\net10.0\BarcodePrinter.Domain.Tests.dll (.NETCoreApp,Version=v10.0)
+A total of 1 test files matched the specified pattern.
+No test is available in D:\Office\Projects\Barcode Printer\Barcode Printer\tests\BarcodePrinter.Domain.Tests\bin\Release\net10.0\BarcodePrinter.Domain.Tests.dll. Make sure that test discoverer & executors are registered and platform & framework version settings are appropriate and try again.
+
+

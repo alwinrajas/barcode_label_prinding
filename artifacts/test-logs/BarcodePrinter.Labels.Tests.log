@@ -1,0 +1,10 @@
+  Determining projects to restore...
+  All projects are up-to-date for restore.
+  BarcodePrinter.Contracts -> D:\Office\Projects\Barcode Printer\Barcode Printer\src\shared\BarcodePrinter.Contracts\bin\Release\net10.0\BarcodePrinter.Contracts.dll
+  BarcodePrinter.Labels -> D:\Office\Projects\Barcode Printer\Barcode Printer\src\server\BarcodePrinter.Labels\bin\Release\net10.0\BarcodePrinter.Labels.dll
+  BarcodePrinter.Labels.Tests -> D:\Office\Projects\Barcode Printer\Barcode Printer\tests\BarcodePrinter.Labels.Tests\bin\Release\net10.0\BarcodePrinter.Labels.Tests.dll
+Test run for D:\Office\Projects\Barcode Printer\Barcode Printer\tests\BarcodePrinter.Labels.Tests\bin\Release\net10.0\BarcodePrinter.Labels.Tests.dll (.NETCoreApp,Version=v10.0)
+A total of 1 test files matched the specified pattern.
+
+Passed!  - Failed:     0, Passed:    74, Skipped:     0, Total:    74, Duration: 179 ms - BarcodePrinter.Labels.Tests.dll (net10.0)
+

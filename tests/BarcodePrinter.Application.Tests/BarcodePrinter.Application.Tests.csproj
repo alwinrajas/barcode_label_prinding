@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\server\BarcodePrinter.Application\BarcodePrinter.Application.csproj" />
+    <ProjectReference Include="..\..\src\server\BarcodePrinter.Infrastructure\BarcodePrinter.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\server\BarcodePrinter.Api\BarcodePrinter.Api.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="FluentAssertions" />
+    <PackageReference Include="NSubstitute" />
+
+  </ItemGroup>
+</Project>

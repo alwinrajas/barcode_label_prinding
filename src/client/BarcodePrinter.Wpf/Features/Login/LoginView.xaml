@@ -1,0 +1,65 @@
+<Window x:Class="BarcodePrinter.Wpf.Features.Login.LoginView"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Sign in — Barcode Label Printing"
+        Width="440" SizeToContent="Height"
+        ResizeMode="NoResize"
+        WindowStartupLocation="CenterScreen"
+        Background="{StaticResource Surface.Base}">
+
+    <StackPanel Margin="32,40,32,40">
+        <!-- App identity -->
+        <TextBlock Text="&#xE8EC;" FontFamily="Segoe MDL2 Assets" FontSize="34"
+                   HorizontalAlignment="Center" Foreground="{StaticResource Brand.Primary}" />
+        <TextBlock Style="{StaticResource Text.Display}" HorizontalAlignment="Center"
+                   Margin="0,12,0,2" Text="Barcode Label Printing" />
+        <TextBlock Style="{StaticResource Text.Caption}" HorizontalAlignment="Center"
+                   Margin="0,0,0,24" Text="Sign in with your account" />
+
+        <Border Style="{StaticResource Card}">
+            <StackPanel>
+                <!-- ═══ Sign-in panel ═══ -->
+                <StackPanel x:Name="SignInPanel">
+                    <TextBlock Style="{StaticResource Text.Label}" Text="Username *" Margin="0,0,0,6" />
+                    <TextBox x:Name="UsernameBox" Style="{StaticResource Input.Text}"
+                             Text="{Binding Username, UpdateSourceTrigger=PropertyChanged}"
+                             AutomationProperties.Name="Username" />
+
+                    <TextBlock Style="{StaticResource Text.Label}" Text="Password *" Margin="0,16,0,6" />
+                    <PasswordBox x:Name="PasswordBox" Style="{StaticResource Input.Password}"
+                                 AutomationProperties.Name="Password" />
+
+                    <Button Style="{StaticResource Button.Primary}" Margin="0,24,0,0"
+                            Content="Sign in" IsDefault="True"
+                            Command="{Binding LoginCommand}"
+                            CommandParameter="{Binding ElementName=PasswordBox}" />
+                </StackPanel>
+
+                <!-- ═══ Forced password change panel (§19.3 must_change_password) ═══ -->
+                <StackPanel x:Name="ChangePanel" Visibility="Collapsed">
+                    <TextBlock Style="{StaticResource Text.Body}" TextWrapping="Wrap"
+                               Margin="0,0,0,16"
+                               Text="Your password must be changed before you continue." />
+                    <TextBlock Style="{StaticResource Text.Label}" Text="Current password *" Margin="0,0,0,6" />
+                    <PasswordBox x:Name="CurrentBox" Style="{StaticResource Input.Password}" />
+                    <TextBlock Style="{StaticResource Text.Label}" Text="New password *" Margin="0,16,0,6" />
+                    <PasswordBox x:Name="NewBox" Style="{StaticResource Input.Password}" />
+                    <TextBlock Style="{StaticResource Text.Label}" Text="Confirm new password *" Margin="0,16,0,6" />
+                    <PasswordBox x:Name="ConfirmBox" Style="{StaticResource Input.Password}" />
+                    <Button Style="{StaticResource Button.Primary}" Margin="0,24,0,0"
+                            Content="Change password and continue" IsDefault="True"
+                            Click="OnChangePasswordClick" />
+                </StackPanel>
+
+                <!-- Error + busy -->
+                <TextBlock Style="{StaticResource Text.Caption}" Margin="0,12,0,0"
+                           Foreground="{StaticResource Accent.Danger}" TextWrapping="Wrap"
+                           Text="{Binding ErrorMessage}" />
+                <ProgressBar Height="3" Margin="0,12,0,0" IsIndeterminate="True"
+                             Visibility="{Binding IsBusy, Converter={StaticResource BoolToVisibility}}"
+                             Foreground="{StaticResource Brand.Primary}" BorderThickness="0"
+                             Background="Transparent" />
+            </StackPanel>
+        </Border>
+    </StackPanel>
+</Window>

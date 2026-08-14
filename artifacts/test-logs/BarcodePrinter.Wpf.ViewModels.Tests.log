@@ -1,0 +1,13 @@
+  Determining projects to restore...
+  All projects are up-to-date for restore.
+  BarcodePrinter.Contracts -> D:\Office\Projects\Barcode Printer\Barcode Printer\src\shared\BarcodePrinter.Contracts\bin\Release\net10.0\BarcodePrinter.Contracts.dll
+  BarcodePrinter.Printing.Abstractions -> D:\Office\Projects\Barcode Printer\Barcode Printer\src\server\BarcodePrinter.Printing.Abstractions\bin\Release\net10.0\BarcodePrinter.Printing.Abstractions.dll
+  BarcodePrinter.Client.Core -> D:\Office\Projects\Barcode Printer\Barcode Printer\src\client\BarcodePrinter.Client.Core\bin\Release\net10.0-windows\BarcodePrinter.Client.Core.dll
+  BarcodePrinter.Printing.Client -> D:\Office\Projects\Barcode Printer\Barcode Printer\src\client\BarcodePrinter.Printing.Client\bin\Release\net10.0-windows\BarcodePrinter.Printing.Client.dll
+  BarcodePrinter.Wpf -> D:\Office\Projects\Barcode Printer\Barcode Printer\src\client\BarcodePrinter.Wpf\bin\Release\net10.0-windows\BarcodePrinter.Wpf.dll
+  BarcodePrinter.Wpf.ViewModels.Tests -> D:\Office\Projects\Barcode Printer\Barcode Printer\tests\BarcodePrinter.Wpf.ViewModels.Tests\bin\Release\net10.0-windows\BarcodePrinter.Wpf.ViewModels.Tests.dll
+Test run for D:\Office\Projects\Barcode Printer\Barcode Printer\tests\BarcodePrinter.Wpf.ViewModels.Tests\bin\Release\net10.0-windows\BarcodePrinter.Wpf.ViewModels.Tests.dll (.NETCoreApp,Version=v10.0)
+A total of 1 test files matched the specified pattern.
+
+Passed!  - Failed:     0, Passed:    10, Skipped:     0, Total:    10, Duration: 1 s - BarcodePrinter.Wpf.ViewModels.Tests.dll (net10.0)
+

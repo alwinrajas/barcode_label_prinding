@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Blueprint structural rule #4: referenced only by the Api composition root.
+       Oracle.ManagedDataAccess.Core is added in phase 9. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\BarcodePrinter.Application\BarcodePrinter.Application.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Polly" />
+  </ItemGroup>
+</Project>

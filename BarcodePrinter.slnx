@@ -1,0 +1,32 @@
+<Solution>
+  <Folder Name="/src/" />
+  <Folder Name="/src/client/">
+    <Project Path="src/client/BarcodePrinter.Client.Core/BarcodePrinter.Client.Core.csproj" />
+    <Project Path="src/client/BarcodePrinter.Printing.Client/BarcodePrinter.Printing.Client.csproj" />
+    <Project Path="src/client/BarcodePrinter.Wpf/BarcodePrinter.Wpf.csproj" />
+  </Folder>
+  <Folder Name="/src/server/">
+    <Project Path="src/server/BarcodePrinter.Api/BarcodePrinter.Api.csproj" />
+    <Project Path="src/server/BarcodePrinter.Application/BarcodePrinter.Application.csproj" />
+    <Project Path="src/server/BarcodePrinter.Domain/BarcodePrinter.Domain.csproj" />
+    <Project Path="src/server/BarcodePrinter.Infrastructure/BarcodePrinter.Infrastructure.csproj" />
+    <Project Path="src/server/BarcodePrinter.Integration.Oracle/BarcodePrinter.Integration.Oracle.csproj" />
+    <Project Path="src/server/BarcodePrinter.Labels/BarcodePrinter.Labels.csproj" />
+    <Project Path="src/server/BarcodePrinter.Printing.Abstractions/BarcodePrinter.Printing.Abstractions.csproj" />
+    <Project Path="src/server/BarcodePrinter.Printing.Server/BarcodePrinter.Printing.Server.csproj" />
+  </Folder>
+  <Folder Name="/src/shared/">
+    <Project Path="src/shared/BarcodePrinter.Contracts/BarcodePrinter.Contracts.csproj" />
+  </Folder>
+  <Folder Name="/src/tools/">
+    <Project Path="src/tools/BarcodePrinter.DbMigrator/BarcodePrinter.DbMigrator.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/BarcodePrinter.Application.Tests/BarcodePrinter.Application.Tests.csproj" />
+    <Project Path="tests/BarcodePrinter.Domain.Tests/BarcodePrinter.Domain.Tests.csproj" />
+    <Project Path="tests/BarcodePrinter.Integration.Tests/BarcodePrinter.Integration.Tests.csproj" />
+    <Project Path="tests/BarcodePrinter.Labels.Tests/BarcodePrinter.Labels.Tests.csproj" />
+    <Project Path="tests/BarcodePrinter.Printing.Tests/BarcodePrinter.Printing.Tests.csproj" />
+    <Project Path="tests/BarcodePrinter.Wpf.ViewModels.Tests/BarcodePrinter.Wpf.ViewModels.Tests.csproj" />
+  </Folder>
+</Solution>

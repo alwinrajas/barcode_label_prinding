@@ -1,0 +1,85 @@
+# ============================================================================
+# MySQL 8.4 configuration for the Barcode Label Printing server.
+#
+# Merge these into my.ini (Windows: C:\ProgramData\MySQL\MySQL Server 8.4\my.ini)
+# and restart the service. Every setting below is required by the architecture
+# rather than a preference; the reason is stated so nobody "tidies" one away.
+#
+# Verify after restart:
+#   SELECT @@transaction_isolation, @@local_infile, @@ngram_token_size,
+#          @@binlog_format, @@innodb_buffer_pool_size;
+# ============================================================================
+
+[mysqld]
+
+# --- Reachability -----------------------------------------------------------
+# The API is the database's only client and runs on this machine. Binding to
+# loopback means MySQL is not reachable from the LAN at all, so port 3306 never
+# needs a firewall rule and a stolen workstation cannot reach it (§16).
+bind-address = 127.0.0.1
+port         = 3306
+
+# --- Correctness under concurrency ------------------------------------------
+# MySQL's default REPEATABLE-READ takes gap locks. With 20 users allocating
+# carton numbers and bulk-upserting imports concurrently, those gap locks
+# deadlock. READ-COMMITTED is REQUIRED, not tuning (§9).
+transaction_isolation = READ-COMMITTED
+
+# --- Bulk import ------------------------------------------------------------
+# MySqlBulkCopy uses LOAD DATA LOCAL INFILE. Without this the 20k-row import
+# fails outright; the API asserts it at startup so it fails loudly (R15).
+local_infile = 1
+
+# --- Product search ---------------------------------------------------------
+# Bigram FULLTEXT is what makes "CAPM2" match inside "5GCAPM2N" — a substring a
+# B-tree index cannot serve (§9.3). CHANGING THIS REQUIRES REBUILDING THE
+# FULLTEXT INDEXES; it is not a live-tunable setting.
+ngram_token_size = 2
+
+# --- Character set ----------------------------------------------------------
+character-set-server = utf8mb4
+collation-server     = utf8mb4_0900_ai_ci
+
+# --- Point-in-time recovery -------------------------------------------------
+# ROW format so the hourly binlog copy can replay to any point between nightly
+# dumps (RPO <= 1 h). Retention is 8 days, comfortably longer than the gap
+# between full backups.
+log_bin           = mysql-bin
+binlog_format     = ROW
+binlog_expire_logs_seconds = 691200
+sync_binlog       = 1
+
+# --- Durability -------------------------------------------------------------
+# A committed print job must survive a power cut: the label was physically
+# printed and the carton numbers were issued.
+# The import runbook temporarily lowers this to 2 for bulk loads only, then
+# restores it — that change is deliberate, documented and reversible (§11.4).
+innodb_flush_log_at_trx_commit = 1
+
+# --- Memory -----------------------------------------------------------------
+# 50-60% of server RAM (§9). The value below assumes the 16 GB baseline; adjust
+# once C-21 confirms the hardware. Too large is worse than too small — the OS
+# will swap and every query slows down.
+innodb_buffer_pool_size      = 8G
+innodb_buffer_pool_instances = 8
+innodb_log_file_size         = 1G
+
+# --- Connections ------------------------------------------------------------
+# The API pool caps at 60 (MaximumPoolSize). Headroom covers admin sessions and
+# the backup job without letting a connection leak exhaust the server.
+max_connections = 150
+wait_timeout    = 600
+
+# --- Partition maintenance --------------------------------------------------
+# print_jobs, print_job_items and audit_logs are RANGE-partitioned monthly with
+# 12 months pre-created. ADD NEW PARTITIONS BEFORE THE LAST ONE IS REACHED, or
+# rows fall into pmax and stop pruning:
+#   ALTER TABLE print_jobs REORGANIZE PARTITION pmax INTO (
+#     PARTITION p202709 VALUES LESS THAN (TO_DAYS('2027-10-01')),
+#     PARTITION pmax    VALUES LESS THAN MAXVALUE);
+# Diarise this annually — see RUNBOOK.md, "Yearly maintenance".
+
+[mysqldump]
+# Consistent snapshot without locking, so a night shift is never interrupted.
+single-transaction = 1
+quick              = 1
