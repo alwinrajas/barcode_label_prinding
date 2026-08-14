@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Installs the Barcode Label Printing desktop client on a workstation.
 
@@ -20,7 +20,16 @@ param(
     [string]$InstallPath = "$env:ProgramFiles\Barcode Label Printing",
     [string]$CertificateFile,
     [switch]$Silent,
-    [switch]$NoShortcut
+    [switch]$NoShortcut,
+
+    # The client payload is already in place and belongs to someone else — the
+    # MSI. Do the configuration half only: client.json, certificate trust,
+    # shortcut, connectivity check. Copying several hundred megabytes on top of
+    # files an installer is tracking would break its repair and uninstall.
+    [switch]$ConfigureOnly,
+
+    # Add/Remove Programs is the installer's job when there is one.
+    [switch]$NoUninstallEntry
 )
 
 $ErrorActionPreference = "Stop"
@@ -37,26 +46,32 @@ if ($ApiBaseUrl -match '^http://' -and $ApiBaseUrl -notmatch 'localhost|127\.0\.
     Write-Warning "Plain HTTP to a remote server sends access tokens in the clear. Use HTTPS outside a local test."
 }
 
-$source = Join-Path $PSScriptRoot "client"
-if (-not (Test-Path (Join-Path $source "BarcodePrinter.Wpf.exe"))) {
-    throw "client\BarcodePrinter.Wpf.exe not found. Run this from the folder Publish.ps1 produced."
-}
-
-# A print run must never be interrupted by an upgrade.
-$running = Get-Process -Name "BarcodePrinter.Wpf" -ErrorAction SilentlyContinue
-if ($running) {
-    if ($Silent) {
-        throw "The client is running (PID $($running.Id -join ', ')). Retry when the operator has closed it."
+if ($ConfigureOnly) {
+    if (-not (Test-Path (Join-Path $InstallPath "BarcodePrinter.Wpf.exe"))) {
+        throw "-ConfigureOnly was given but BarcodePrinter.Wpf.exe is not in '$InstallPath'."
     }
-    $answer = Read-Host "The client is running. Close it and continue? [y/N]"
-    if ($answer -ne 'y') { throw "Cancelled." }
-    $running | Stop-Process -Force
-    Start-Sleep -Seconds 2
-}
+} else {
+    $source = Join-Path $PSScriptRoot "client"
+    if (-not (Test-Path (Join-Path $source "BarcodePrinter.Wpf.exe"))) {
+        throw "client\BarcodePrinter.Wpf.exe not found. Run this from the folder Publish.ps1 produced."
+    }
 
-Write-Host "Installing to $InstallPath..." -ForegroundColor Cyan
-New-Item -ItemType Directory -Path $InstallPath -Force | Out-Null
-Copy-Item (Join-Path $source "*") $InstallPath -Recurse -Force
+    # A print run must never be interrupted by an upgrade.
+    $running = Get-Process -Name "BarcodePrinter.Wpf" -ErrorAction SilentlyContinue
+    if ($running) {
+        if ($Silent) {
+            throw "The client is running (PID $($running.Id -join ', ')). Retry when the operator has closed it."
+        }
+        $answer = Read-Host "The client is running. Close it and continue? [y/N]"
+        if ($answer -ne 'y') { throw "Cancelled." }
+        $running | Stop-Process -Force
+        Start-Sleep -Seconds 2
+    }
+
+    Write-Host "Installing to $InstallPath..." -ForegroundColor Cyan
+    New-Item -ItemType Directory -Path $InstallPath -Force | Out-Null
+    Copy-Item (Join-Path $source "*") $InstallPath -Recurse -Force
+}
 
 # This package normally reaches the workstation as a zip that somebody
 # downloaded, and every file extracted from it carries a Zone.Identifier
@@ -101,8 +116,12 @@ if (-not $NoShortcut) {
     $shortcut.Save()
 }
 
-# Add/Remove Programs, so IT can see what is deployed where.
 $version = (Get-Item (Join-Path $InstallPath "BarcodePrinter.Wpf.exe")).VersionInfo.FileVersion
+
+# Add/Remove Programs, so IT can see what is deployed where. Skipped under an
+# installer: two uninstall entries for one product is worse than none, and the
+# one that runs Remove-Item would leave the MSI believing it is still installed.
+if (-not $NoUninstallEntry) {
 $uninstallKey = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\BarcodePrinterClient"
 New-Item -Path $uninstallKey -Force | Out-Null
 Set-ItemProperty $uninstallKey -Name "DisplayName"     -Value "Barcode Label Printing"
@@ -113,6 +132,7 @@ Set-ItemProperty $uninstallKey -Name "NoModify"        -Value 1 -Type DWord
 Set-ItemProperty $uninstallKey -Name "NoRepair"        -Value 1 -Type DWord
 Set-ItemProperty $uninstallKey -Name "UninstallString" -Value `
     "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command `"Remove-Item '$InstallPath' -Recurse -Force; Remove-Item '$uninstallKey' -Recurse -Force`""
+}
 
 # Fail here rather than at first login: a client that cannot see the server is
 # an IT problem to fix now, not a support call from the shop floor tomorrow.

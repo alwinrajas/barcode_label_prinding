@@ -20,10 +20,10 @@ TestResults/
 *.launch
 
 ## Build artifacts & local publish directories
-artifacts/api/
-artifacts/client/
-artifacts/migrator/
-artifacts/build-info.json
+artifacts/
+deploy/payload/
+installer/
+installer-obj/
 
 ## Sensitive configuration & Environment files
 *.env

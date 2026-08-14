@@ -8,9 +8,13 @@
         Background="{StaticResource Surface.Base}">
 
     <StackPanel Margin="32,40,32,40">
-        <!-- App identity -->
-        <TextBlock Text="&#xE8EC;" FontFamily="Segoe MDL2 Assets" FontSize="34"
-                   HorizontalAlignment="Center" Foreground="{StaticResource Brand.Primary}" />
+        <!-- App identity. The product mark, not the full logo lockup: the
+             lockup carries its own wordmark, which would sit directly above the
+             product name below and read as two different names. -->
+        <Image Source="pack://application:,,,/Assets/logo-mark.png"
+               Width="72" Height="72" HorizontalAlignment="Center"
+               RenderOptions.BitmapScalingMode="HighQuality"
+               AutomationProperties.Name="Barcode Label Printing" />
         <TextBlock Style="{StaticResource Text.Display}" HorizontalAlignment="Center"
                    Margin="0,12,0,2" Text="Barcode Label Printing" />
         <TextBlock Style="{StaticResource Text.Caption}" HorizontalAlignment="Center"

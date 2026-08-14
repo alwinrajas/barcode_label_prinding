@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Produces the three deployable artifacts: the API service, the database
     migrator, and the WPF client.
@@ -205,14 +205,15 @@ if ($CertThumbprint) {
                    "Defender SmartScreen's 'Windows protected your PC' the first time they run the client.")
 }
 
-Copy-Item (Join-Path $PSScriptRoot "Install-Server.ps1")        $OutputPath
-Copy-Item (Join-Path $PSScriptRoot "Uninstall-Server.ps1")      $OutputPath
-Copy-Item (Join-Path $PSScriptRoot "Configure-Server.ps1")      $OutputPath
-Copy-Item (Join-Path $PSScriptRoot "Install-Client.ps1")        $OutputPath
-Copy-Item (Join-Path $PSScriptRoot "Backup-BarcodePrinter.ps1") $OutputPath
-Copy-Item (Join-Path $PSScriptRoot "Register-BackupTasks.ps1")  $OutputPath
-Copy-Item (Join-Path $PSScriptRoot "Test-Recovery.ps1")         $OutputPath
-Copy-Item (Join-Path $PSScriptRoot "RUNBOOK.md")                $OutputPath
+# Every deployment script, by pattern rather than by name. Listing them
+# individually meant a new script silently failed to reach the package — which
+# is how the installer came to invoke a file that was never shipped.
+# Publish.ps1 itself is a build tool and has no business on a target machine.
+Get-ChildItem $PSScriptRoot -Filter "*.ps1" |
+    Where-Object { $_.Name -ne "Publish.ps1" -and $_.Name -ne "Build-Installer.ps1" } |
+    Copy-Item -Destination $OutputPath
+
+Copy-Item (Join-Path $PSScriptRoot "RUNBOOK.md") $OutputPath
 Copy-Item (Join-Path $PSScriptRoot "mysql") $OutputPath -Recurse
 
 @{

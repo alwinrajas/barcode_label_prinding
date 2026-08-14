@@ -3,9 +3,18 @@
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
-    <ApplicationIcon />
+    <!-- Generated from logo.png by installer\New-AppIcon.ps1. This is what
+         Explorer, the taskbar, Alt-Tab and Add/Remove Programs show. -->
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
     <AssemblyTitle>Barcode Label Printing</AssemblyTitle>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Resource, not Content: compiled into the assembly so it cannot go
+         missing from a deployment, and reachable by pack:// URI. -->
+    <Resource Include="Assets\logo-mark.png" />
+    <Resource Include="Assets\logo.png" />
+  </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\BarcodePrinter.Client.Core\BarcodePrinter.Client.Core.csproj" />
     <ProjectReference Include="..\BarcodePrinter.Printing.Client\BarcodePrinter.Printing.Client.csproj" />
@@ -15,5 +24,6 @@
     <PackageReference Include="Microsoft.Extensions.Hosting" />
     <PackageReference Include="Serilog.Extensions.Hosting" />
     <PackageReference Include="Serilog.Sinks.File" />
+    <PackageReference Include="ZXing.Net" />
   </ItemGroup>
 </Project>

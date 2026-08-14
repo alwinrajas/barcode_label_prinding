@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Rehearses the restore against a scratch database and measures how long it
     takes. Read-only with respect to production.

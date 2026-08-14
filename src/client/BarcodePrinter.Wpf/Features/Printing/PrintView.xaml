@@ -9,8 +9,12 @@
     <!-- One screen, four numbered sections (§12.4): a wizard would add clicks
          to the most-repeated task in the application. -->
     <Grid Margin="24">
+        <!-- The form is fixed-width and the preview takes the rest. The label is
+             the thing the operator is checking before committing media and
+             carton numbers, so on a wide screen the extra pixels belong to it,
+             not to text boxes that were already wide enough. -->
         <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="*" MinWidth="420" />
+            <ColumnDefinition Width="480" MinWidth="420" />
             <ColumnDefinition Width="16" />
             <ColumnDefinition Width="*" MinWidth="380" />
         </Grid.ColumnDefinitions>
@@ -148,7 +152,6 @@
             <Grid.RowDefinitions>
                 <RowDefinition Height="*" />
                 <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
             <Border Grid.Row="0" Style="{StaticResource Card}" Padding="18">
@@ -165,25 +168,21 @@
                                      Foreground="{StaticResource Brand.Primary}"
                                      Visibility="{Binding IsPreviewLoading, Converter={StaticResource BoolToVisibility}}" />
                     </DockPanel>
-                    <Border Grid.Row="1" Background="{StaticResource Surface.Sunken}" CornerRadius="6">
+                    <Border Grid.Row="1" Background="{StaticResource Surface.Sunken}" CornerRadius="6" Padding="12">
                         <Grid>
-                            <!-- The rendered label. This is the check that catches a
-                                 wrong batch or a clipped description before 500
-                                 labels come off the printer. -->
-                            <Border Background="White" CornerRadius="4" Margin="10"
-                                    VerticalAlignment="Center" HorizontalAlignment="Center"
+                            <!-- The rendered label preview. Fills available preview panel space. -->
+                            <Border Background="White" CornerRadius="4" Padding="8"
+                                    VerticalAlignment="Stretch" HorizontalAlignment="Stretch"
                                     Visibility="{Binding PreviewImage, Converter={StaticResource NullToCollapsed}}">
                                 <Image Source="{Binding PreviewImage}" Stretch="Uniform"
-                                       MaxWidth="380" MaxHeight="220"
                                        RenderOptions.BitmapScalingMode="HighQuality"
                                        AutomationProperties.Name="Label preview" />
                             </Border>
 
-                            <!-- Said plainly when the label cannot be drawn, rather
-                                 than an empty box the operator has to interpret. -->
+                            <!-- Said plainly when the label cannot be drawn -->
                             <TextBlock Style="{StaticResource Text.Caption}" TextAlignment="Center"
                                        HorizontalAlignment="Center" VerticalAlignment="Center"
-                                       MaxWidth="260" TextWrapping="Wrap" Margin="12"
+                                       MaxWidth="280" TextWrapping="Wrap" Margin="12"
                                        Text="{Binding PreviewUnavailable}"
                                        Visibility="{Binding PreviewUnavailable, Converter={StaticResource NullToCollapsed}}" />
 
@@ -195,8 +194,7 @@
                         </Grid>
                     </Border>
 
-                    <!-- The exact bytes, for support and template sign-off. Collapsed
-                         by default: an operator checks the picture, not the source. -->
+                    <!-- The exact bytes, for support and template sign-off -->
                     <Expander Grid.Row="2" Margin="0,8,0,0" Padding="0,4,0,0"
                               Header="Label data sent to the printer"
                               Visibility="{Binding PreviewZpl, Converter={StaticResource NullToCollapsed}}">
@@ -221,10 +219,6 @@
                     <ComboBox Height="36" ItemsSource="{Binding Printers}" SelectedItem="{Binding SelectedPrinter}"
                               DisplayMemberPath="Name" />
 
-                    <!-- Deliberately NOT IsDefault: printing is destructive of media
-                         and carton numbers, so it must be an explicit action, never
-                         a stray Enter in a text box. Ctrl+P is the keyboard route
-                         (§12.4), bound on the UserControl below. -->
                     <Button Margin="0,16,0,0" Height="48" Style="{StaticResource Button.Primary}"
                             FontSize="16"
                             Command="{Binding PrintCommand}"
@@ -235,34 +229,21 @@
                         </TextBlock>
                     </Button>
 
-                    <TextBlock Margin="0,10,0,0" Style="{StaticResource Text.Caption}"
-                               Foreground="{StaticResource Accent.Danger}" TextWrapping="Wrap"
-                               Text="{Binding ErrorMessage}" />
-                    <TextBlock Margin="0,4,0,0" Style="{StaticResource Text.Body}"
-                               Foreground="{StaticResource Accent.Success}" TextWrapping="Wrap"
-                               Text="{Binding SuccessMessage}" />
-                </StackPanel>
-            </Border>
+                    <Border Margin="0,10,0,0" Padding="10,8" CornerRadius="6"
+                            Background="{StaticResource Surface.Sunken}"
+                            Visibility="{Binding ErrorMessage, Converter={StaticResource NullToCollapsed}}">
+                        <TextBlock Style="{StaticResource Text.Caption}"
+                                   Foreground="{StaticResource Accent.Danger}" TextWrapping="Wrap"
+                                   Text="{Binding ErrorMessage}" />
+                    </Border>
 
-            <Border Grid.Row="2" Style="{StaticResource Card}" Padding="14" Margin="0,16,0,0"
-                    Visibility="{Binding RecentJobs.Count, Converter={StaticResource CountToVisibility}}">
-                <StackPanel>
-                    <TextBlock Style="{StaticResource Text.Label}" Text="RECENT JOBS" Margin="0,0,0,6" />
-                    <ItemsControl ItemsSource="{Binding RecentJobs}" MaxHeight="120">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <DockPanel Margin="0,3" LastChildFill="False">
-                                    <TextBlock DockPanel.Dock="Left" Style="{StaticResource Text.Caption}">
-                                        <Run Text="{Binding JobNo, Mode=OneWay}" FontFamily="{StaticResource Font.Mono}" />
-                                        <Run Text="{Binding ProductCode, Mode=OneWay}" FontWeight="SemiBold" />
-                                        <Run Text="{Binding LabelCount, Mode=OneWay, StringFormat=· {0} labels}" />
-                                    </TextBlock>
-                                    <TextBlock DockPanel.Dock="Right" Style="{StaticResource Text.Caption}"
-                                               Text="{Binding Status}" FontWeight="SemiBold" />
-                                </DockPanel>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
+                    <Border Margin="0,10,0,0" Padding="10,8" CornerRadius="6"
+                            Background="{StaticResource Surface.Sunken}"
+                            Visibility="{Binding SuccessMessage, Converter={StaticResource NullToCollapsed}}">
+                        <TextBlock Style="{StaticResource Text.Body}" FontWeight="SemiBold"
+                                   Foreground="{StaticResource Accent.Success}" TextWrapping="Wrap"
+                                   Text="{Binding SuccessMessage}" />
+                    </Border>
                 </StackPanel>
             </Border>
         </Grid>

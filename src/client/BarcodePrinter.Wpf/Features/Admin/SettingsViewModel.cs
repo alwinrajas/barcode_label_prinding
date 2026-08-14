@@ -7,20 +7,44 @@ using CommunityToolkit.Mvvm.Input;
 
 namespace BarcodePrinter.Wpf.Features.Admin;
 
-public sealed partial class SettingItem(SettingDto dto) : ObservableObject
+public sealed partial class SettingItem : ObservableObject
 {
-    public string Key { get; } = dto.Key;
-    public string ValueType { get; } = dto.ValueType;
-    public bool IsSecret { get; } = dto.IsSecret;
-    public string? Description { get; } = dto.Description;
-    public string OriginalValue { get; } = dto.Value ?? "";
+    public SettingItem(SettingDto dto)
+    {
+        Key = dto.Key;
+        ValueType = dto.ValueType;
+        IsSecret = dto.IsSecret;
+        Description = dto.Description;
+        OriginalValue = dto.Value ?? "";
+        Label = Humanise(dto.Key);
+        value = dto.Value ?? "";
 
-    /// <summary>Human label from the key: "Label:FeedbackFormUrl" → "Feedback form URL".</summary>
-    public string Label { get; } = Humanise(dto.Key);
+        if (IsFeedbackUrl)
+        {
+            QrPreviewImage = GenerateQrCode(Value);
+        }
+    }
+
+    public string Key { get; }
+    public string ValueType { get; }
+    public bool IsSecret { get; }
+    public string? Description { get; }
+    public string OriginalValue { get; }
+    public string Label { get; }
 
     public bool IsBool => ValueType == "Bool";
+    public bool IsFeedbackUrl => Key.EndsWith("FeedbackFormUrl", StringComparison.OrdinalIgnoreCase) || Key.Contains("FeedbackUrl", StringComparison.OrdinalIgnoreCase);
 
-    [ObservableProperty] private string value = dto.Value ?? "";
+    [ObservableProperty] private string value = "";
+    [ObservableProperty] private System.Windows.Media.ImageSource? qrPreviewImage;
+
+    partial void OnValueChanged(string value)
+    {
+        if (IsFeedbackUrl)
+        {
+            QrPreviewImage = GenerateQrCode(value);
+        }
+    }
 
     public bool BoolValue
     {
@@ -29,6 +53,36 @@ public sealed partial class SettingItem(SettingDto dto) : ObservableObject
     }
 
     public bool IsDirty => !string.Equals(Value, OriginalValue, StringComparison.Ordinal);
+
+    private static System.Windows.Media.ImageSource? GenerateQrCode(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        try
+        {
+            var writer = new ZXing.BarcodeWriterPixelData
+            {
+                Format = ZXing.BarcodeFormat.QR_CODE,
+                Options = new ZXing.QrCode.QrCodeEncodingOptions
+                {
+                    Height = 180,
+                    Width = 180,
+                    Margin = 1
+                }
+            };
+            var pixelData = writer.Write(text);
+            return System.Windows.Media.Imaging.BitmapSource.Create(
+                pixelData.Width, pixelData.Height,
+                96, 96,
+                System.Windows.Media.PixelFormats.Bgra32,
+                null,
+                pixelData.Pixels,
+                pixelData.Width * 4);
+        }
+        catch
+        {
+            return null;
+        }
+    }
 
     private static string Humanise(string key)
     {

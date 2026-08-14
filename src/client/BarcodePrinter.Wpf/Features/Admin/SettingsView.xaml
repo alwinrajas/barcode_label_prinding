@@ -9,42 +9,61 @@
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <DockPanel Grid.Row="0" LastChildFill="False" Margin="0,0,0,12">
+        <DockPanel Grid.Row="0" LastChildFill="False" Margin="0,0,0,16">
             <TextBlock DockPanel.Dock="Left" Style="{StaticResource Text.H1}" Text="Settings"
                        VerticalAlignment="Center" />
-            <Button DockPanel.Dock="Right" Height="36" Padding="14,0" Content="Reload"
+            <Button DockPanel.Dock="Right" Height="36" Padding="16,0" Content="Reload"
                     Command="{Binding LoadCommand}" />
         </DockPanel>
 
-        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
-            <ItemsControl ItemsSource="{Binding Groups}" MaxWidth="820" HorizontalAlignment="Left">
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <ItemsControl ItemsSource="{Binding Groups}" HorizontalAlignment="Stretch">
                 <ItemsControl.ItemTemplate>
                     <DataTemplate>
-                        <Border Style="{StaticResource Card}" Padding="20" Margin="0,0,0,16">
-                            <StackPanel>
-                                <TextBlock Style="{StaticResource Text.H1}" FontSize="16" Text="{Binding Name}" />
-                                <ItemsControl ItemsSource="{Binding Items}" Margin="0,12,0,0">
+                        <Border Style="{StaticResource Card}" Padding="24" Margin="0,0,0,20" HorizontalAlignment="Stretch">
+                            <StackPanel HorizontalAlignment="Stretch">
+                                <TextBlock Style="{StaticResource Text.H1}" FontSize="18" Text="{Binding Name}" Margin="0,0,0,16" />
+                                <ItemsControl ItemsSource="{Binding Items}" HorizontalAlignment="Stretch">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
-                                            <Grid Margin="0,0,0,14">
+                                            <Grid Margin="0,0,0,20" HorizontalAlignment="Stretch">
                                                 <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="260" />
+                                                    <ColumnDefinition Width="320" />
                                                     <ColumnDefinition Width="*" />
                                                 </Grid.ColumnDefinitions>
-                                                <StackPanel Grid.Column="0" Margin="0,0,16,0">
-                                                    <TextBlock Style="{StaticResource Text.Body}" Text="{Binding Label}" />
-                                                    <TextBlock Style="{StaticResource Text.Caption}" TextWrapping="Wrap"
+                                                <StackPanel Grid.Column="0" Margin="0,0,24,0" VerticalAlignment="Top">
+                                                    <TextBlock Style="{StaticResource Text.Body}" FontWeight="SemiBold" Text="{Binding Label}" />
+                                                    <TextBlock Style="{StaticResource Text.Caption}" TextWrapping="Wrap" Margin="0,2,0,0"
                                                                Text="{Binding Description}" />
                                                 </StackPanel>
-                                                <Grid Grid.Column="1">
+                                                <StackPanel Grid.Column="1" VerticalAlignment="Top">
                                                     <TextBox Style="{StaticResource Input.Text}"
                                                              Text="{Binding Value, UpdateSourceTrigger=PropertyChanged}"
                                                              Visibility="{Binding IsBool, Converter={StaticResource InverseBoolToVisibility}}" />
                                                     <CheckBox VerticalAlignment="Center" Content="Enabled"
-                                                              IsChecked="{Binding BoolValue}"
-                                                              FontFamily="{StaticResource Font.Ui}" FontSize="14"
-                                                              Visibility="{Binding IsBool, Converter={StaticResource BoolToVisibility}}" />
-                                                </Grid>
+                                                             IsChecked="{Binding BoolValue}"
+                                                             FontFamily="{StaticResource Font.Ui}" FontSize="14"
+                                                             Visibility="{Binding IsBool, Converter={StaticResource BoolToVisibility}}" />
+
+                                                    <!-- Live QR Code Preview for Feedback URL -->
+                                                    <Border Margin="0,12,0,0" Padding="14" CornerRadius="8"
+                                                            Background="{StaticResource Surface.Sunken}"
+                                                            HorizontalAlignment="Left"
+                                                            Visibility="{Binding IsFeedbackUrl, Converter={StaticResource BoolToVisibility}}">
+                                                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                                            <Border Background="White" CornerRadius="6" Padding="6" Margin="0,0,16,0" VerticalAlignment="Center">
+                                                                <Image Source="{Binding QrPreviewImage}" Width="140" Height="140"
+                                                                       RenderOptions.BitmapScalingMode="HighQuality"
+                                                                       AutomationProperties.Name="Live QR code preview" />
+                                                            </Border>
+                                                            <StackPanel VerticalAlignment="Center" MaxWidth="260">
+                                                                <TextBlock Style="{StaticResource Text.Body}" FontWeight="SemiBold" Text="Live Feedback QR Code" />
+                                                                <TextBlock Style="{StaticResource Text.Caption}" TextWrapping="Wrap" Margin="0,4,0,0"
+                                                                           Text="This QR code is generated dynamically from the feedback URL above. Operators can scan this QR code directly from printed labels." />
+                                                            </StackPanel>
+                                                        </StackPanel>
+                                                    </Border>
+                                                </StackPanel>
                                             </Grid>
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
@@ -56,18 +75,28 @@
             </ItemsControl>
         </ScrollViewer>
 
-        <StackPanel Grid.Row="2" Margin="0,12,0,0">
-            <TextBlock Style="{StaticResource Text.Caption}" Foreground="{StaticResource Accent.Danger}"
-                       TextWrapping="Wrap" Text="{Binding ErrorMessage}" />
-            <TextBlock Style="{StaticResource Text.Caption}" Foreground="{StaticResource Accent.Success}"
-                       Text="{Binding StatusMessage}" />
-            <Button Margin="0,10,0,0" HorizontalAlignment="Left" Style="{StaticResource Button.Primary}"
-                    Content="Save changes" Command="{Binding SaveCommand}"
+        <StackPanel Grid.Row="2" Margin="0,16,0,0">
+            <Border Margin="0,0,0,8" Padding="10,8" CornerRadius="6"
+                    Background="{StaticResource Surface.Sunken}"
+                    Visibility="{Binding ErrorMessage, Converter={StaticResource NullToCollapsed}}">
+                <TextBlock Style="{StaticResource Text.Caption}"
+                           Foreground="{StaticResource Accent.Danger}" TextWrapping="Wrap"
+                           Text="{Binding ErrorMessage}" />
+            </Border>
+            <Border Margin="0,0,0,8" Padding="10,8" CornerRadius="6"
+                    Background="{StaticResource Surface.Sunken}"
+                    Visibility="{Binding StatusMessage, Converter={StaticResource NullToCollapsed}}">
+                <TextBlock Style="{StaticResource Text.Body}" FontWeight="SemiBold"
+                           Foreground="{StaticResource Accent.Success}" TextWrapping="Wrap"
+                           Text="{Binding StatusMessage}" />
+            </Border>
+            <Button HorizontalAlignment="Left" Style="{StaticResource Button.Primary}"
+                    Content="Save changes" Command="{Binding SaveCommand}" Height="40" Padding="20,0"
                     Visibility="{Binding CanManage, Converter={StaticResource BoolToVisibility}}" />
         </StackPanel>
-            <!-- LOADING: spans the whole screen at the top so it reads as "this page
-             is fetching", without covering the data already on it. -->
+
+        <!-- LOADING: spans the whole screen at the top -->
         <ProgressBar Grid.RowSpan="99" Grid.ColumnSpan="99" Margin="-24,-24,-24,0"
                      Style="{StaticResource State.BusyBar}" />
-</Grid>
+    </Grid>
 </UserControl>
