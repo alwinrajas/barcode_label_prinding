@@ -175,8 +175,8 @@ public class PrintApiTests(ApiFixture fx) : IAsyncLifetime
         // Change the product master AFTER printing.
         var detail = (await _admin.GetFromJsonAsync<ProductDetail>(ApiRoutes.Products.ById(_productId)))!;
         (await _admin.PutAsJsonAsync(ApiRoutes.Products.ById(_productId), new SaveProductRequest(
-            detail.Code, "RENAMED AFTER PRINTING", null, detail.UomId, "XX", "CHANGED", null,
-            "NEW-BATCH", null, null, null, null, null, null, detail.ConcurrencyStamp)))
+            detail.Code, "RENAMED AFTER PRINTING", detail.UomId, "XX", "CHANGED",
+            "NEW-BATCH", null, null, null, null, detail.ConcurrencyStamp)))
             .StatusCode.Should().Be(HttpStatusCode.NoContent);
 
         var reprint = (await (await _admin.PostAsJsonAsync(ApiRoutes.Print.Reprint,
@@ -362,9 +362,8 @@ public class PrintApiTests(ApiFixture fx) : IAsyncLifetime
         }
 
         var response = await _admin.PostAsJsonAsync(ApiRoutes.Products.Base, new SaveProductRequest(
-            "IT-PRINT-01", "5G M2 CAP", null, null, "M2", "NATURAL", null,
-            "CONE", new DateOnly(2026, 7, 21), new DateOnly(2027, 7, 21),
-            750, "750[D]", 750, 10, null));
+            "IT-PRINT-01", "5G M2 CAP", null, "M2", "NATURAL",
+            "CONE", 750, "750[D]", 750, 10, null));
         response.EnsureSuccessStatusCode();
         return (await response.Content.ReadFromJsonAsync<IdResponse>())!.Id;
     }

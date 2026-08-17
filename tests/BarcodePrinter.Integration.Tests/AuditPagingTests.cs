@@ -27,8 +27,8 @@ public class AuditPagingTests(ApiFixture fx) : IAsyncLifetime
         for (var i = 0; i < 45; i++)
         {
             await _admin.PostAsJsonAsync(ApiRoutes.Products.Base, new SaveProductRequest(
-                $"IT-AUDIT-{i:00}", $"Audit paging {i}", null, null, null, null, null,
-                null, null, null, null, null, null, null, null));
+                $"IT-AUDIT-{i:00}", $"Audit paging {i}", null, null, null,
+                null, null, null, null, null, null));
         }
     }
 

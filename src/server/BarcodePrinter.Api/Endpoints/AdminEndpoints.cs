@@ -141,6 +141,24 @@ public static class AdminEndpoints
         app.MapGet(ApiRoutes.Audit.Actions, async (AdminQueries queries, CancellationToken ct) =>
                 Results.Ok(await queries.ListAuditActionsAsync(ct)))
             .RequirePermission(PermissionCodes.AuditView);
+
+        // The route and the Audit.Export permission already existed but nothing
+        // was mapped to them, so the download 404'd.
+        app.MapGet(ApiRoutes.Audit.Export, async (
+                [FromQuery] DateTime? from, [FromQuery] DateTime? to,
+                [FromQuery] long? userId, [FromQuery] string? action,
+                [FromQuery] string? entityType, [FromQuery] string? severity,
+                BarcodePrinter.Infrastructure.Admin.AuditExport export,
+                ClaimsPrincipal user, CancellationToken ct) =>
+            {
+                var bytes = await export.BuildAsync(
+                    new AuditFilter(from, to, userId, action, entityType, severity, null, 200),
+                    user.FindFirstValue(AppClaimTypes.Username) ?? "", ct);
+                return Results.File(bytes,
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    $"audit-{DateTime.Now:yyyyMMdd-HHmm}.xlsx");
+            })
+            .RequirePermission(PermissionCodes.AuditExport);
     }
 
     private static ActorInfo Actor(ClaimsPrincipal user, HttpContext http) => new(

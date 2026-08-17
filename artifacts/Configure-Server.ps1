@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Changes the settings of an installed Barcode Printer API service without
     reinstalling it.
@@ -69,7 +69,11 @@ if (-not (Test-Path $settingsPath)) {
     throw "$settingsPath not found. Is the server installed at -InstallRoot $InstallRoot?"
 }
 
-$settings = Get-Content $settingsPath -Raw | ConvertFrom-Json -AsHashtable
+# No -AsHashtable (PowerShell 6+ only; this script documents plain elevated
+# PowerShell, which on a server means 5.1). Every write below assigns to a
+# property that already exists in the file, which works identically on the
+# PSCustomObject this produces.
+$settings = Get-Content $settingsPath -Raw | ConvertFrom-Json
 
 function Get-ConnectionBuilder {
     # MySqlConnector ships with the migrator, and parsing a connection string by
@@ -239,11 +243,16 @@ Copy-Item $settingsPath $backupPath -Force
 $settings | ConvertTo-Json -Depth 8 | Set-Content $settingsPath -Encoding UTF8
 
 function Test-Healthy([int]$Port) {
+    # HttpWebRequest, not Invoke-WebRequest -SkipCertificateCheck: that
+    # parameter does not exist under Windows PowerShell 5.1, where the binding
+    # error is indistinguishable from "service is down" inside this retry loop.
     foreach ($attempt in 1..20) {
+        $request = [System.Net.HttpWebRequest]::Create("https://localhost:$Port/health")
+        $request.Timeout = 5000
+        $request.ServerCertificateValidationCallback = { $true }
         try {
-            if ((Invoke-WebRequest "https://localhost:$Port/health" -SkipCertificateCheck -TimeoutSec 5).StatusCode -eq 200) {
-                return $true
-            }
+            $response = $request.GetResponse()
+            try { if ([int]$response.StatusCode -eq 200) { return $true } } finally { $response.Close() }
         } catch { Start-Sleep -Seconds 2 }
     }
     return $false

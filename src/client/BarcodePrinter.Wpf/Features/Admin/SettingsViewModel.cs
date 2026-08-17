@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using BarcodePrinter.Client.Core;
 using BarcodePrinter.Contracts;
 using BarcodePrinter.Contracts.Admin;
+using BarcodePrinter.Wpf.Services;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 
@@ -34,6 +35,10 @@ public sealed partial class SettingItem : ObservableObject
 
     public bool IsBool => ValueType == "Bool";
     public bool IsFeedbackUrl => Key.EndsWith("FeedbackFormUrl", StringComparison.OrdinalIgnoreCase) || Key.Contains("FeedbackUrl", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Auth:* rows change how everyone signs in — flagged so nobody
+    /// edits one thinking it is a per-workstation preference.</summary>
+    public bool IsAdminSetting => Key.StartsWith("Auth:", StringComparison.OrdinalIgnoreCase);
 
     [ObservableProperty] private string value = "";
     [ObservableProperty] private System.Windows.Media.ImageSource? qrPreviewImage;
@@ -116,6 +121,12 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private string? statusMessage;
     [ObservableProperty] private string? errorMessage;
 
+    // Screen states
+    [ObservableProperty] private bool isEmpty;
+    [ObservableProperty] private bool loadFailed;
+    [ObservableProperty] private string? loadErrorMessage;
+    [ObservableProperty] private string? loadErrorReference;
+
     [RelayCommand]
     private async Task LoadAsync()
     {
@@ -123,16 +134,23 @@ public sealed partial class SettingsViewModel : ObservableObject
         {
             var settings = await _api.ListSettingsAsync(CancellationToken.None);
             Groups.Clear();
+            // Deliberate order: what the company is, what a label says, how it
+            // prints, how data arrives, then who may sign in.
             foreach (var group in settings
                 .GroupBy(s => s.Key.Contains(':') ? s.Key[..s.Key.IndexOf(':')] : "General")
-                .OrderBy(g => g.Key))
+                .OrderBy(g => GroupOrder(g.Key))
+                .ThenBy(g => g.Key, StringComparer.OrdinalIgnoreCase))
             {
                 Groups.Add(new SettingGroup(GroupLabel(group.Key),
                     group.OrderBy(s => s.Key).Select(s => new SettingItem(s))));
             }
+            IsEmpty = Groups.Count == 0;
             StatusMessage = null;
-        });
+        }, isLoad: true);
     }
+
+    [RelayCommand]
+    private Task RetryLoadAsync() => LoadAsync();
 
     [RelayCommand]
     private async Task SaveAsync()
@@ -142,16 +160,29 @@ public sealed partial class SettingsViewModel : ObservableObject
         if (changed.Count == 0)
         {
             StatusMessage = "No changes to save.";
+            ToastService.Instance.Info("No changes to save.");
             return;
         }
 
         await GuardAsync(async () =>
         {
             await _api.SaveSettingsAsync(changed, CancellationToken.None);
-            StatusMessage = $"{changed.Count} setting(s) saved. Changes take effect immediately.";
+            var message = $"{changed.Count} setting(s) saved. Changes take effect immediately.";
+            StatusMessage = message;
+            ToastService.Instance.Success(message);
             await LoadAsync();
         });
     }
+
+    private static int GroupOrder(string prefix) => prefix switch
+    {
+        "Company" => 0,
+        "Label" => 1,
+        "Print" or "Printing" => 2,
+        "Import" => 3,
+        "Auth" => 4,
+        _ => 5,
+    };
 
     private static string GroupLabel(string prefix) => prefix switch
     {
@@ -164,25 +195,50 @@ public sealed partial class SettingsViewModel : ObservableObject
         _ => prefix,
     };
 
-    private async Task GuardAsync(Func<Task> action)
+    private async Task GuardAsync(Func<Task> action, bool isLoad = false)
     {
         IsBusy = true;
         ErrorMessage = null;
         try
         {
             await action();
+            if (isLoad)
+            {
+                LoadFailed = false;
+                LoadErrorMessage = null;
+                LoadErrorReference = null;
+            }
         }
         catch (ApiException ex)
         {
             ErrorMessage = ex.Message;
+            ToastService.Instance.Error(ex.Message, ex.CorrelationId);
+            if (isLoad)
+            {
+                SetLoadFailed(ex.Message, ex.CorrelationId);
+            }
         }
         catch (ApiUnreachableException)
         {
-            ErrorMessage = "Cannot reach the server. Check your network connection.";
+            const string message = "Cannot reach the server. Check your network connection.";
+            ErrorMessage = message;
+            ToastService.Instance.Error(message);
+            if (isLoad)
+            {
+                SetLoadFailed(message, null);
+            }
         }
         finally
         {
             IsBusy = false;
         }
+    }
+
+    private void SetLoadFailed(string message, string? reference)
+    {
+        LoadFailed = true;
+        LoadErrorMessage = message;
+        LoadErrorReference = reference;
+        IsEmpty = false;
     }
 }

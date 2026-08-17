@@ -1,8 +1,8 @@
 using System.Collections.ObjectModel;
-using System.Windows;
 using BarcodePrinter.Client.Core;
 using BarcodePrinter.Contracts;
 using BarcodePrinter.Contracts.Admin;
+using BarcodePrinter.Wpf.Services;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 
@@ -58,6 +58,12 @@ public sealed partial class RolesViewModel : ObservableObject
     [ObservableProperty] private string editorTitle = "";
     [ObservableProperty] private string? pendingChangeSummary;
 
+    // Screen states
+    [ObservableProperty] private bool isEmpty;
+    [ObservableProperty] private bool loadFailed;
+    [ObservableProperty] private string? loadErrorMessage;
+    [ObservableProperty] private string? loadErrorReference;
+
     private HashSet<long> _originalPermissions = [];
 
     async partial void OnSelectedRoleChanged(RoleSummary? value)
@@ -75,8 +81,11 @@ public sealed partial class RolesViewModel : ObservableObject
             _allPermissions = await _api.ListPermissionsAsync(CancellationToken.None);
             BuildMatrix();
             await RefreshRolesAsync();
-        });
+        }, isLoad: true);
     }
+
+    [RelayCommand]
+    private Task RetryLoadAsync() => LoadAsync();
 
     private void BuildMatrix()
     {
@@ -108,6 +117,7 @@ public sealed partial class RolesViewModel : ObservableObject
         {
             Roles.Add(role);
         }
+        IsEmpty = !LoadFailed && Roles.Count == 0;
     }
 
     [RelayCommand]
@@ -124,6 +134,7 @@ public sealed partial class RolesViewModel : ObservableObject
         EditDescription = null;
         SetPermissions([]);
         ErrorMessage = null;
+        StatusMessage = null;
     }
 
     private async Task OpenRoleAsync(long id)
@@ -173,17 +184,37 @@ public sealed partial class RolesViewModel : ObservableObject
         };
     }
 
+    /// <summary>Drawer/editor close with a discard confirm when the matrix has
+    /// pending edits.</summary>
+    [RelayCommand]
+    private async Task CloseEditorAsync()
+    {
+        if (!IsEditorOpen)
+        {
+            return;
+        }
+        if (PendingChangeSummary is not null && !await DialogService.ConfirmAsync(
+                "Discard changes?", "You have unsaved permission changes. Close the editor without saving?",
+                "Discard", danger: true))
+        {
+            return;
+        }
+        IsEditorOpen = false;
+        SelectedRole = null;
+    }
+
     [RelayCommand]
     private async Task SaveAsync()
     {
         var permissionIds = Modules.SelectMany(m => m.Permissions)
             .Where(p => p.IsSelected).Select(p => p.Id).ToList();
 
-        if (!IsNewRole && PendingChangeSummary is not null &&
-            MessageBox.Show(
+        // Changing an existing role signs its holders out — say so before it
+        // happens, not after.
+        if (!IsNewRole && PendingChangeSummary is not null && !await DialogService.ConfirmAsync(
+                "Confirm permission change",
                 $"{PendingChangeSummary}\n\nEveryone with this role will be signed out and must sign in again.",
-                "Confirm permission change", MessageBoxButton.OKCancel,
-                MessageBoxImage.Warning) != MessageBoxResult.OK)
+                "Apply changes"))
         {
             return;
         }
@@ -197,12 +228,14 @@ public sealed partial class RolesViewModel : ObservableObject
                 var id = await _api.CreateRoleAsync(request, CancellationToken.None);
                 await RefreshRolesAsync();
                 await OpenRoleAsync(id);
+                ToastService.Instance.Success("Role created.");
             }
             else
             {
                 await _api.UpdateRoleAsync(EditingId, request, CancellationToken.None);
                 await RefreshRolesAsync();
                 await OpenRoleAsync(EditingId);
+                ToastService.Instance.Success("Role saved. Its holders must sign in again.");
             }
             StatusMessage = "Saved.";
         });
@@ -215,8 +248,9 @@ public sealed partial class RolesViewModel : ObservableObject
         {
             return;
         }
-        if (MessageBox.Show($"Delete role {EditName}?", "Confirm",
-                MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
+        if (!await DialogService.ConfirmAsync("Delete role",
+                $"Delete the role {EditName}? Users holding it lose these permissions.",
+                "Delete", danger: true))
         {
             return;
         }
@@ -226,6 +260,7 @@ public sealed partial class RolesViewModel : ObservableObject
             await _api.DeleteRoleAsync(EditingId, CancellationToken.None);
             IsEditorOpen = false;
             StatusMessage = "Role deleted.";
+            ToastService.Instance.Success("Role deleted.");
             await RefreshRolesAsync();
         });
     }
@@ -244,25 +279,50 @@ public sealed partial class RolesViewModel : ObservableObject
         }
     }
 
-    private async Task GuardAsync(Func<Task> action)
+    private async Task GuardAsync(Func<Task> action, bool isLoad = false)
     {
         IsBusy = true;
         ErrorMessage = null;
         try
         {
             await action();
+            if (isLoad)
+            {
+                LoadFailed = false;
+                LoadErrorMessage = null;
+                LoadErrorReference = null;
+            }
         }
         catch (ApiException ex)
         {
             ErrorMessage = ex.Message;
+            ToastService.Instance.Error(ex.Message, ex.CorrelationId);
+            if (isLoad)
+            {
+                SetLoadFailed(ex.Message, ex.CorrelationId);
+            }
         }
         catch (ApiUnreachableException)
         {
-            ErrorMessage = "Cannot reach the server. Check your network connection.";
+            const string message = "Cannot reach the server. Check your network connection.";
+            ErrorMessage = message;
+            ToastService.Instance.Error(message);
+            if (isLoad)
+            {
+                SetLoadFailed(message, null);
+            }
         }
         finally
         {
             IsBusy = false;
         }
+    }
+
+    private void SetLoadFailed(string message, string? reference)
+    {
+        LoadFailed = true;
+        LoadErrorMessage = message;
+        LoadErrorReference = reference;
+        IsEmpty = false;
     }
 }

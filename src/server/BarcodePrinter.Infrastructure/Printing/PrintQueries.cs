@@ -20,7 +20,7 @@ public sealed class PrintQueries(IDbConnectionFactory connections)
                    host AS Host, port AS Port, windows_printer_name AS WindowsPrinterName,
                    owner_workstation AS OwnerWorkstation, dpi AS Dpi, language AS Language,
                    supports_status_query AS SupportsStatusQuery,
-                   is_active AS IsActive, is_default AS IsDefault
+                   is_active AS IsActive, is_default AS IsDefault, last_seen_at AS LastSeenUtc
             FROM printers {(activeOnly ? "WHERE is_active = 1" : "")}
             ORDER BY is_default DESC, name
             """, cancellationToken: ct));
@@ -37,7 +37,7 @@ public sealed class PrintQueries(IDbConnectionFactory connections)
                    host AS Host, port AS Port, windows_printer_name AS WindowsPrinterName,
                    owner_workstation AS OwnerWorkstation, dpi AS Dpi, language AS Language,
                    supports_status_query AS SupportsStatusQuery,
-                   is_active AS IsActive, is_default AS IsDefault
+                   is_active AS IsActive, is_default AS IsDefault, last_seen_at AS LastSeenUtc
             FROM printers WHERE id = @id
             """, new { id }, cancellationToken: ct));
         return row is null ? null : Map(row);
@@ -46,7 +46,7 @@ public sealed class PrintQueries(IDbConnectionFactory connections)
     private static PrinterDto Map(PrinterRow r) => new(
         r.Id, r.Code, r.Name, r.Location, r.ConnectionType, r.DispatchMode, r.Host, r.Port,
         r.WindowsPrinterName, r.OwnerWorkstation, r.Dpi, r.Language,
-        r.SupportsStatusQuery, r.IsActive, r.IsDefault);
+        r.SupportsStatusQuery, r.IsActive, r.IsDefault, r.LastSeenUtc);
 
     // ---- Print history --------------------------------------------------------
 
@@ -205,6 +205,7 @@ public sealed class PrintQueries(IDbConnectionFactory connections)
         public bool SupportsStatusQuery { get; set; }
         public bool IsActive { get; set; }
         public bool IsDefault { get; set; }
+        public DateTime? LastSeenUtc { get; set; }
     }
 
     private sealed class JobRow

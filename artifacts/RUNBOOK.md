@@ -5,6 +5,115 @@ Targets: **RPO ≤ 1 hour, RTO ≤ 2 hours** (blueprint §16).
 
 ---
 
+## Which deployment are you doing?
+
+There are two, and they do not mix.
+
+**Single machine — `BarcodePrinterSetup.exe`.** One file, double-clicked. It
+installs MySQL, creates the database and a restricted account, applies the
+schema, installs and starts the API service, issues and trusts an HTTPS
+certificate, configures the client and puts shortcuts on the desktop and Start
+Menu. Nothing below section 8 applies: there are no manual steps. Section 1a
+covers it. This is what a customer receives.
+
+**LAN server plus workstations — the scripts in this package.** The server is
+built by hand from sections 0–6 and each workstation runs `Install-Client.ps1`.
+Use this when the database and API live on a server and operators work from
+their own machines.
+
+The rest of this runbook documents the second one, plus the backup, recovery and
+troubleshooting procedures that apply to both.
+
+---
+
+## 1a. Single-machine installation
+
+Give the customer `BarcodePrinterSetup.exe` (~400 MB) and nothing else. They
+double-click it, accept the elevation prompt, and wait. It finishes on a screen
+offering **Launch**.
+
+They do **not** need .NET, Docker, MySQL, PowerShell, or any knowledge of what
+is inside.
+
+What it does, in order, and what each step protects:
+
+1. Checks the machine is 64-bit Windows 10/Server 2016 or later, and installs
+   the Visual C++ runtime if missing — **MySQL's binaries need it**, and without
+   it the database service fails to start with no useful message.
+2. Lays down the payload under `C:\Program Files\Barcode Label Printing`.
+3. **Looks for an existing MySQL 8**, and asks the binary its version rather
+   than trusting the service name — XAMPP and WAMP both register MariaDB as a
+   service called `MySQL`, and MariaDB cannot run this schema.
+4. Provisions MySQL from the bundled archive if none was found: writes `my.ini`
+   **before first start** (so `ngram_token_size`, `local_infile` and
+   READ-COMMITTED hold from the first byte written), takes the next free port if
+   3306 is occupied, initialises the data directory, registers
+   `BarcodePrinterMySQL` and secures the root account.
+5. Creates the database and a **restricted account scoped to it**. Root
+   credentials go to an ACL'd option file for maintenance, never into
+   application configuration.
+6. Applies the schema with the migrator as an explicit, logged step, and seeds
+   the initial admin **only when the users table is empty**.
+7. Creates the service account, grants it "log on as a service", issues a
+   self-signed certificate (or **reuses the existing one** — it does not
+   regenerate on every run, which would break already-configured clients),
+   grants the account read access to its private key, and starts
+   `BarcodePrinter.Api` with automatic start.
+8. Configures the client to point at the local API and trusts the certificate.
+9. **Verifies all of it** — see section 1b — and only then offers Launch.
+
+Re-running the same installer repairs and upgrades in place. The database is
+never recreated, and an uninstall keeps it unless data removal is explicitly
+requested.
+
+Command-line options, for scripted or GPO deployment:
+
+```powershell
+BarcodePrinterSetup.exe /passive                       # progress bar, no prompts
+BarcodePrinterSetup.exe /quiet                         # fully silent
+BarcodePrinterSetup.exe /quiet HttpsPort=5443          # non-default port
+BarcodePrinterSetup.exe /quiet LanSubnet=192.168.10.0/24   # also serve other workstations
+BarcodePrinterSetup.exe /repair
+BarcodePrinterSetup.exe /uninstall
+BarcodePrinterSetup.exe /log C:\temp\install.log       # always worth passing
+```
+
+By default the API is **not** exposed to the network at all — no firewall rule
+is opened unless `LanSubnet` is given.
+
+---
+
+## 1b. Verifying an installation
+
+The installer runs this itself and refuses to report success unless it passes.
+Run it again any time the machine starts misbehaving:
+
+```powershell
+& "C:\Program Files\Barcode Label Printing\Test-Installation.ps1" `
+    -InstallDir "C:\Program Files\Barcode Label Printing" -Detailed
+```
+
+It checks the MySQL service, that the application's own account can reach its
+own database, that the schema is current, that the API service runs as the
+dedicated account with automatic start, that the HTTPS endpoint answers **with
+the certificate that was installed** (not a developer certificate it fell back
+to), that the certificate is trusted, that `/health` and `/health/ready` are
+healthy, that the client payload is complete, and that the client points at this
+API.
+
+Logs, when something is wrong:
+
+| File | What it tells you |
+|---|---|
+| `C:\ProgramData\BarcodePrinter\logs\install-*.log` | Which phase failed, and why. **Start here.** |
+| `C:\ProgramData\BarcodePrinter\logs\mysql-setup.log` | What mysqld actually said |
+| `C:\ProgramData\BarcodePrinter\logs\api-*.log` | The running service |
+| `%TEMP%\Barcode Label Printing_*_BarcodePrinterApp.log` | The MSI's own log |
+
+The bundle log says only *that* the MSI failed. The install log says *why*.
+
+---
+
 ## 0. Before you start
 
 | Need | Why |

@@ -27,7 +27,9 @@ param(
     # absence of a signature. Pass the thumbprint of a code-signing certificate
     # in CurrentUser\My or LocalMachine\My.
     [string]$CertThumbprint,
-    [string]$TimestampUrl = "http://timestamp.digicert.com"
+    [string]$TimestampUrl = "http://timestamp.digicert.com",
+    [switch]$SkipTests,
+    [switch]$SkipIntegrationTests
 )
 
 $ErrorActionPreference = "Stop"
@@ -90,29 +92,43 @@ function Publish-Component {
 # is REPORTED rather than silently counted as a pass — `dotnet test` exits 0 for
 # an empty assembly, so without this an empty suite looks identical to a green
 # one.
-Write-Host "Running the test suite..." -ForegroundColor Cyan
+if ($SkipTests) {
+    Write-Host "Skipping test suite (-SkipTests specified)..." -ForegroundColor Yellow
+} else {
+    Write-Host "Running the test suite..." -ForegroundColor Cyan
 
-# Inside the output folder: the evidence for a release travels with it.
-$testLogDir = Join-Path $OutputPath "test-logs"
-New-Item -ItemType Directory -Path $testLogDir -Force | Out-Null
-$runSettings = Join-Path $repo "tests\test.runsettings"
+    # Inside the output folder: the evidence for a release travels with it.
+    $testLogDir = Join-Path $OutputPath "test-logs"
+    New-Item -ItemType Directory -Path $testLogDir -Force | Out-Null
+    $runSettings = Join-Path $repo "tests\test.runsettings"
 
-$testProjects = Get-ChildItem (Join-Path $repo "tests") -Filter "*.csproj" -Recurse |
-    Sort-Object Name
-if (-not $testProjects) {
-    throw "No test projects found under tests\. Refusing to publish an unverified build."
-}
+    $testProjects = Get-ChildItem (Join-Path $repo "tests") -Filter "*.csproj" -Recurse |
+        Sort-Object Name
+    if (-not $testProjects) {
+        throw "No test projects found under tests\. Refusing to publish an unverified build."
+    }
 
-$suiteResults = [System.Collections.Generic.List[object]]::new()
+    $dockerAvailable = try { (& docker info 2>&1) -match "Server Version" } catch { $false }
 
-foreach ($project in $testProjects) {
-    $suite = $project.BaseName
-    Write-Host "  $suite ..." -ForegroundColor DarkGray -NoNewline
+    $suiteResults = [System.Collections.Generic.List[object]]::new()
 
-    $output = & dotnet test $project.FullName -c $Configuration --settings $runSettings --nologo 2>&1
-    $exitCode = $LASTEXITCODE
-    $text = $output | Out-String
-    $text | Set-Content (Join-Path $testLogDir "$suite.log") -Encoding UTF8
+    foreach ($project in $testProjects) {
+        $suite = $project.BaseName
+
+        if ($suite -match 'Integration' -and ($SkipIntegrationTests -or -not $dockerAvailable)) {
+            Write-Host "  $suite : SKIPPED (Docker daemon not running)" -ForegroundColor Yellow
+            $suiteResults.Add([pscustomobject]@{
+                Suite = $suite; Status = "SKIPPED"; Passed = 0; Failed = 0
+            })
+            continue
+        }
+
+        Write-Host "  $suite ..." -ForegroundColor DarkGray -NoNewline
+
+        $output = & dotnet test $project.FullName -c $Configuration --settings $runSettings --nologo 2>&1
+        $exitCode = $LASTEXITCODE
+        $text = $output | Out-String
+        $text | Set-Content (Join-Path $testLogDir "$suite.log") -Encoding UTF8
 
     # "no tests" is not a failure of this run, but it is not a pass either.
     $isEmpty = $text -match 'No test is available'
@@ -156,6 +172,7 @@ if ($emptySuites) {
 
 $totalPassed = ($suiteResults | Measure-Object -Property Passed -Sum).Sum
 Write-Host "$totalPassed tests passed across $($suiteResults.Count) suites." -ForegroundColor Green
+}
 
 # Between the phases, not just at the start. Running the tests BUILDS the WPF
 # project, which starts a Roslyn compiler server (VBCSCompiler) that outlives

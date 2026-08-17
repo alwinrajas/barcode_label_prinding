@@ -73,9 +73,8 @@ internal static class PrintScenario
         }
 
         var response = await admin.PostAsJsonAsync(ApiRoutes.Products.Base, new SaveProductRequest(
-            "IT-PRINT-01", "5G M2 CAP", null, null, "M2", "NATURAL", null,
-            "CONE", new DateOnly(2026, 7, 21), new DateOnly(2027, 7, 21),
-            750, "750[D]", 750, 10, null));
+            "IT-PRINT-01", "5G M2 CAP", null, "M2", "NATURAL",
+            "CONE", 750, "750[D]", 750, 10, null));
         response.EnsureSuccessStatusCode();
         return (await response.Content.ReadFromJsonAsync<IdResponse>())!.Id;
     }

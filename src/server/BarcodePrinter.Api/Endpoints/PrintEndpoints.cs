@@ -62,6 +62,13 @@ public static class PrintEndpoints
                 long id, PrinterAdminService service, CancellationToken ct) =>
                 Results.Ok(await service.TestAsync(id, ct)))
             .RequirePermission(PermissionCodes.SettingsManagePrinters);
+
+        // PrintView (not admin) permission: the print screen shows the selected
+        // printer's live status so operators see "offline" before they print.
+        group.MapGet("/{id:long}/status", async (
+                long id, PrinterAdminService service, CancellationToken ct) =>
+                Results.Ok(await service.GetStatusAsync(id, ct)))
+            .RequirePermission(PermissionCodes.PrintView);
     }
 
     private static void MapJobs(WebApplication app)
@@ -151,7 +158,7 @@ public static class PrintEndpoints
                 var preview = await service.RenderAsync(request, ct);
                 return Results.Ok(new PrintPreviewResponse(
                     preview.Png is null ? null : Convert.ToBase64String(preview.Png),
-                    preview.Zpl, preview.Format, preview.Unavailable));
+                    preview.Zpl, preview.Format, preview.Unavailable, preview.Warning));
             })
             .RequirePermission(PermissionCodes.PrintView);
     }

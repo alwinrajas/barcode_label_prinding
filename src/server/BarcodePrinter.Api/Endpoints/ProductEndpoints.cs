@@ -75,11 +75,23 @@ public static class ProductEndpoints
                 long id, IFormFile file, ProductService service,
                 ClaimsPrincipal user, HttpContext http, CancellationToken ct) =>
             {
+                // DomainException (not hand-rolled Results.Problem) so the
+                // middleware envelope carries the code and correlation id the
+                // client's error mapping expects.
                 if (file.Length is 0 or > MaxImageBytes)
                 {
-                    return Results.Problem(statusCode: 400, title: "IMAGE_TOO_LARGE",
-                        detail: "The image must be between 1 byte and 5 MB.");
+                    throw new BarcodePrinter.Domain.DomainException("IMAGE_TOO_LARGE",
+                        "The image must be between 1 byte and 5 MB.");
                 }
+                var extension = Path.GetExtension(file.FileName).ToLowerInvariant();
+                if (extension is not (".jpg" or ".jpeg" or ".png" or ".webp"))
+                {
+                    throw new BarcodePrinter.Domain.DomainException("IMAGE_INVALID",
+                        "Unsupported file type. Use JPG, PNG or WebP.");
+                }
+                // The image store is the real gate: it decodes and re-encodes,
+                // so a mislabeled or malformed file fails there regardless of
+                // what the extension or Content-Type claimed.
                 await using var stream = file.OpenReadStream();
                 var hash = await service.SetImageAsync(id, stream, file.FileName, Actor(user, http), ct);
                 return Results.Ok(new { hash });

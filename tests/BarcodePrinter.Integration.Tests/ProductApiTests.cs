@@ -264,9 +264,8 @@ public class ProductApiTests(ApiFixture fx) : IAsyncLifetime
     }
 
     private static SaveProductRequest Request(string code, string description, string? stamp = null) => new(
-        code, description, null, null, "M2", "NATURAL", null,
-        "BATCH-1", new DateOnly(2026, 7, 21), new DateOnly(2027, 7, 21),
-        750, "750[D]", 750, 10, stamp);
+        code, description, null, "M2", "NATURAL",
+        "BATCH-1", 750, "750[D]", 750, 10, stamp);
 
     private sealed record CreatedResponse(long Id);
 

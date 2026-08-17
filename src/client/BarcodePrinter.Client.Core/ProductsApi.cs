@@ -37,15 +37,23 @@ public sealed class ProductsApi(ApiClient api)
     public Task<IReadOnlyList<UomDto>> UomsAsync(CancellationToken ct) =>
         api.GetAsync<IReadOnlyList<UomDto>>(ApiRoutes.Products.Uoms, ct);
 
-    public async Task<string> UploadImageAsync(long id, string filePath, CancellationToken ct)
+    /// <summary>Uploads a product image. The caller is expected to have run
+    /// <see cref="ImageFileValidator.Validate"/> first; the sniffed content
+    /// type is passed in so a renamed extension can never mislabel the part.
+    /// The content factory lets ApiClient retry transparently after a token
+    /// refresh — each attempt opens a fresh stream.</summary>
+    public async Task<string> UploadImageAsync(
+        long id, string filePath, string contentType, IProgress<double>? progress, CancellationToken ct)
     {
-        using var content = new MultipartFormDataContent();
-        await using var file = File.OpenRead(filePath);
-        var part = new StreamContent(file);
-        part.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(
-            Path.GetExtension(filePath).ToLowerInvariant() == ".png" ? "image/png" : "image/jpeg");
-        content.Add(part, "file", Path.GetFileName(filePath));
-        var result = await api.PostMultipartAsync<HashResponse>(ApiRoutes.Products.Image(id), content, ct);
+        var length = new FileInfo(filePath).Length;
+        var result = await api.PostMultipartAsync<HashResponse>(ApiRoutes.Products.Image(id), () =>
+        {
+            var content = new MultipartFormDataContent();
+            var part = new StreamContent(new ProgressStream(File.OpenRead(filePath), length, progress));
+            part.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(contentType);
+            content.Add(part, "file", Path.GetFileName(filePath));
+            return content;
+        }, ct);
         return result.Hash;
     }
 

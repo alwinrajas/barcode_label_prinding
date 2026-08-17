@@ -81,6 +81,9 @@ public partial class App : Application
                         typeof(App).Assembly.GetName().Version?.ToString(3) ?? "1.0.0");
                     return client;
                 });
+                // Same instance the shell's ToastHost renders — VMs may also
+                // reach it via ToastService.Instance this phase.
+                services.AddSingleton(Services.ToastService.Instance);
                 services.AddSingleton<ConnectionStatus>();
                 services.AddSingleton<ApiClient>();
                 services.AddSingleton<ProductsApi>();

@@ -40,7 +40,10 @@ public sealed class ApiFixture : IAsyncLifetime
     public async Task InitializeAsync()
     {
         await _mysql.StartAsync();
-        ConnectionString = _mysql.GetConnectionString() + ";AllowLoadLocalInfile=true";
+        ConnectionString = _mysql.GetConnectionString() + ";AllowLoadLocalInfile=true;Max Pool Size=100;Connection Timeout=30;Default Command Timeout=60;";
+
+        // Explicit readiness check: verify MySQL is actually accepting queries before running migrations (§Task 8/9)
+        await WaitForDatabaseReadyAsync(ConnectionString);
 
         // Real production scripts — never a lookalike schema.
         var upgrade = DeployChanges.To
@@ -107,6 +110,43 @@ public sealed class ApiFixture : IAsyncLifetime
         cmd.Parameters.AddWithValue("@h", hash);
         cmd.Parameters.AddWithValue("@r", roleCode);
         await cmd.ExecuteNonQueryAsync();
+    }
+
+    public async Task ResetUserPasswordAsync(string username, string password)
+    {
+        var hash = new PasswordHasher<object>().HashPassword(null!, password);
+        await using var conn = await OpenDbAsync();
+        await using var cmd = new MySqlCommand(
+            "UPDATE users SET password_hash = @h, security_stamp = UUID(), must_change_password = 0 WHERE username = @u;", conn);
+        cmd.Parameters.AddWithValue("@u", username);
+        cmd.Parameters.AddWithValue("@h", hash);
+        await cmd.ExecuteNonQueryAsync();
+    }
+
+    private static async Task WaitForDatabaseReadyAsync(string connectionString, int timeoutSeconds = 60)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(timeoutSeconds);
+        Exception? lastException = null;
+        while (DateTime.UtcNow < deadline)
+        {
+            try
+            {
+                await using var conn = new MySqlConnection(connectionString);
+                await conn.OpenAsync();
+                await using var cmd = new MySqlCommand("SELECT 1;", conn);
+                var result = await cmd.ExecuteScalarAsync();
+                if (result is not null && Convert.ToInt32(result) == 1)
+                {
+                    return;
+                }
+            }
+            catch (Exception ex)
+            {
+                lastException = ex;
+                await Task.Delay(500);
+            }
+        }
+        throw new InvalidOperationException($"MySQL container failed to become ready within {timeoutSeconds}s.", lastException);
     }
 
     public async Task DisposeAsync()

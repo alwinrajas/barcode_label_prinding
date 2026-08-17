@@ -139,6 +139,59 @@ public sealed class PrinterAdminService(
             : new PrinterTestResult(true, "Test label sent. Check the printer.");
     }
 
+    /// <summary>Live reachability. Network printers get a real TCP probe;
+    /// client-dispatched printers are judged by their workstation's poll
+    /// heartbeat (every ~3 s while the app runs); File printers are always
+    /// reachable. Never throws for an unreachable device — offline is data.</summary>
+    public async Task<PrinterStatusDto> GetStatusAsync(long id, CancellationToken ct)
+    {
+        await using var conn = await connections.OpenAsync(ct);
+        var row = await conn.QuerySingleOrDefaultAsync<StatusRow>(new CommandDefinition(
+            """
+            SELECT CAST(id AS SIGNED) AS Id, connection_type AS ConnectionType,
+                   dispatch_mode AS DispatchMode, host AS Host, port AS Port,
+                   owner_workstation AS OwnerWorkstation, last_seen_at AS LastSeenUtc
+            FROM printers WHERE id = @id
+            """, new { id }, cancellationToken: ct)) ?? throw new NotFoundException("Printer", id);
+
+        if (row.DispatchMode == "Client")
+        {
+            var fresh = row.LastSeenUtc is { } seen && DateTime.UtcNow - seen < TimeSpan.FromSeconds(15);
+            return new PrinterStatusDto(id, fresh,
+                fresh ? null
+                    : $"Workstation '{row.OwnerWorkstation ?? "not configured"}' is not running the application.",
+                row.LastSeenUtc);
+        }
+
+        if (row.ConnectionType == "NetworkTcp")
+        {
+            if (string.IsNullOrWhiteSpace(row.Host))
+            {
+                return new PrinterStatusDto(id, false, "No IP address or host name is configured.", row.LastSeenUtc);
+            }
+            try
+            {
+                using var probe = new System.Net.Sockets.TcpClient();
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                timeout.CancelAfter(TimeSpan.FromSeconds(2));
+                await probe.ConnectAsync(row.Host, row.Port ?? 9100, timeout.Token);
+
+                await conn.ExecuteAsync(new CommandDefinition(
+                    "UPDATE printers SET last_seen_at = UTC_TIMESTAMP(3) WHERE id = @id",
+                    new { id }, cancellationToken: ct));
+                return new PrinterStatusDto(id, true, null, DateTime.UtcNow);
+            }
+            catch (Exception) when (!ct.IsCancellationRequested)
+            {
+                return new PrinterStatusDto(id, false,
+                    $"No response from {row.Host}:{row.Port ?? 9100}. Check power and network.",
+                    row.LastSeenUtc);
+            }
+        }
+
+        return new PrinterStatusDto(id, true, null, row.LastSeenUtc);
+    }
+
     private static void Validate(SavePrinterRequest r)
     {
         if (string.IsNullOrWhiteSpace(r.Code) || string.IsNullOrWhiteSpace(r.Name))
@@ -189,6 +242,17 @@ public sealed class PrinterAdminService(
         public string? WindowsPrinterName { get; set; }
         public bool SupportsStatusQuery { get; set; }
     }
+
+    private sealed class StatusRow
+    {
+        public long Id { get; set; }
+        public string ConnectionType { get; set; } = "";
+        public string DispatchMode { get; set; } = "";
+        public string? Host { get; set; }
+        public int? Port { get; set; }
+        public string? OwnerWorkstation { get; set; }
+        public DateTime? LastSeenUtc { get; set; }
+    }
 }
 
 /// <summary>
@@ -205,6 +269,16 @@ public sealed class ClientDispatchService(
     public async Task<IReadOnlyList<long>> GetPendingAsync(string workstation, CancellationToken ct)
     {
         await using var conn = await connections.OpenAsync(ct);
+
+        // The poll doubles as a heartbeat: it is the only signal that a
+        // client-dispatched printer's workstation is alive, and it feeds the
+        // online/last-seen display on the Printers screen.
+        await conn.ExecuteAsync(new CommandDefinition(
+            """
+            UPDATE printers SET last_seen_at = UTC_TIMESTAMP(3)
+            WHERE dispatch_mode = 'Client' AND owner_workstation = @workstation
+            """, new { workstation }, cancellationToken: ct));
+
         return (await conn.QueryAsync<long>(new CommandDefinition(
             """
             SELECT CAST(j.id AS SIGNED) FROM print_jobs j
@@ -320,7 +394,9 @@ public sealed class PrintPreviewService(
             ?? throw new NotFoundException("Product", request.ProductId);
 
         return await renderer.RenderPreviewAsync(
-            request.TemplateId, product,
+            await TemplateResolver.ResolveAsync(
+                conn, request.TemplateId, request.ProductId, request.PrinterId, ct),
+            product,
             request.Batch ?? product.DefaultBatch,
             request.ProductionDate ?? product.DefaultProductionDate,
             request.ExpiryDate ?? product.DefaultExpiryDate,

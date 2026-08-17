@@ -166,28 +166,36 @@ public class RbacAndAuthTests(ApiFixture fx)
         client.DefaultRequestHeaders.Authorization =
             new AuthenticationHeaderValue("Bearer", login.AccessToken);
 
-        var change = await client.PostAsJsonAsync(ApiRoutes.Auth.ChangePassword,
-            new ChangePasswordRequest(ApiFixture.AdminPassword, "NewAdmin@Test2!", "it-tests"));
+        try
+        {
+            var change = await client.PostAsJsonAsync(ApiRoutes.Auth.ChangePassword,
+                new ChangePasswordRequest(ApiFixture.AdminPassword, "NewAdmin@Test2!", "it-tests"));
 
-        // The change hands back a REPLACEMENT session, because it just revoked
-        // the one the caller used to make this request.
-        change.StatusCode.Should().Be(HttpStatusCode.OK);
-        var replacement = (await change.Content.ReadFromJsonAsync<LoginResponse>())!;
-        replacement.AccessToken.Should().NotBe(login.AccessToken);
+            // The change hands back a REPLACEMENT session, because it just revoked
+            // the one the caller used to make this request.
+            change.StatusCode.Should().Be(HttpStatusCode.OK);
+            var replacement = (await change.Content.ReadFromJsonAsync<LoginResponse>())!;
+            replacement.AccessToken.Should().NotBe(login.AccessToken);
 
-        // The pre-change refresh token must be dead.
-        var refresh = await fx.CreateClient().PostAsJsonAsync(ApiRoutes.Auth.Refresh,
-            new RefreshRequest(login.RefreshToken, null));
-        refresh.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+            // The pre-change refresh token must be dead.
+            var refresh = await fx.CreateClient().PostAsJsonAsync(ApiRoutes.Auth.Refresh,
+                new RefreshRequest(login.RefreshToken, null));
+            refresh.StatusCode.Should().Be(HttpStatusCode.BadRequest);
 
-        // Restore for other tests, using the session the change just issued —
-        // no second login needed, which is the point of returning it.
-        var restore = fx.CreateClient();
-        restore.DefaultRequestHeaders.Authorization =
-            new AuthenticationHeaderValue("Bearer", replacement.AccessToken);
-        (await restore.PostAsJsonAsync(ApiRoutes.Auth.ChangePassword,
-            new ChangePasswordRequest("NewAdmin@Test2!", ApiFixture.AdminPassword, "it-tests")))
-            .StatusCode.Should().Be(HttpStatusCode.OK);
+            // Restore for other tests, using the session the change just issued —
+            // no second login needed, which is the point of returning it.
+            var restore = fx.CreateClient();
+            restore.DefaultRequestHeaders.Authorization =
+                new AuthenticationHeaderValue("Bearer", replacement.AccessToken);
+            (await restore.PostAsJsonAsync(ApiRoutes.Auth.ChangePassword,
+                new ChangePasswordRequest("NewAdmin@Test2!", ApiFixture.AdminPassword, "it-tests")))
+                .StatusCode.Should().Be(HttpStatusCode.OK);
+        }
+        finally
+        {
+            // Guaranteed state cleanup: restore the admin password even if assertions fail
+            await fx.ResetUserPasswordAsync("it-admin", ApiFixture.AdminPassword);
+        }
     }
 
     // ---- helpers ---------------------------------------------------------------

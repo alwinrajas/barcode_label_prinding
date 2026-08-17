@@ -71,11 +71,29 @@ foreach ($name in @($ServiceName, $MySqlServiceName)) {
 }
 
 # The WPF client may be open; the payload cannot be deleted while it is.
+# Ask first, the same way the close button does, so the application gets to run
+# its own shutdown. Only a client that ignores the request is terminated, and
+# that is reported rather than done silently — the installer's own preflight
+# normally closes it well before this point.
 $client = Get-Process -Name "BarcodePrinter.Wpf" -ErrorAction SilentlyContinue
 if ($client) {
-    Write-Log "  closing the desktop client..."
-    $client | Stop-Process -Force -ErrorAction SilentlyContinue
-    Start-Sleep -Seconds 2
+    Write-Log "  asking the desktop client to close..."
+    foreach ($process in $client) {
+        try { $null = $process.CloseMainWindow() } catch { }
+    }
+    $deadline = (Get-Date).AddSeconds(20)
+    while ((Get-Process -Name "BarcodePrinter.Wpf" -ErrorAction SilentlyContinue) -and (Get-Date) -lt $deadline) {
+        Start-Sleep -Milliseconds 500
+    }
+
+    $stubborn = Get-Process -Name "BarcodePrinter.Wpf" -ErrorAction SilentlyContinue
+    if ($stubborn) {
+        Write-Log "  the client did not close within 20s; terminating it so the payload can be removed." Yellow
+        $stubborn | Stop-Process -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 2
+    } else {
+        Write-Log "  desktop client closed." Green
+    }
 }
 
 # ---- 2. Firewall -----------------------------------------------------------

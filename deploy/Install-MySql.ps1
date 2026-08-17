@@ -62,10 +62,33 @@ param(
 $ErrorActionPreference = "Stop"
 
 New-Item -ItemType Directory -Path (Split-Path $LogPath) -Force | Out-Null
+$script:firstFailureRecorded = $false
 function Write-Step([string]$Message, [string]$Colour = "Cyan") {
     $line = "[{0:yyyy-MM-dd HH:mm:ss}] {1}" -f (Get-Date), $Message
     Add-Content -Path $LogPath -Value $line
     Write-Host $Message -ForegroundColor $Colour
+}
+
+trap {
+    if (-not $script:firstFailureRecorded) {
+        $script:firstFailureRecorded = $true
+        # Never log command arguments, SQL input, or exception data here: they
+        # can contain generated credentials. The durable record still identifies
+        # the failing command/script location and native exit code when present.
+        Write-Step "FIRST FAILURE: MySQL provisioning" Red
+        Write-Step ("  type       : {0}" -f $_.Exception.GetType().FullName) Red
+        Write-Step ("  message    : {0}" -f $_.Exception.Message) Red
+        Write-Step ("  category   : {0}" -f $_.CategoryInfo) Red
+        if ($_.FullyQualifiedErrorId) { Write-Step ("  error id   : {0}" -f $_.FullyQualifiedErrorId) Red }
+        if ($_.InvocationInfo -and $_.InvocationInfo.PositionMessage) {
+            Write-Step ("  location   : {0}" -f ($_.InvocationInfo.PositionMessage -replace "`r?`n", " | ")) Red
+        }
+        if ($_.ScriptStackTrace) {
+            Write-Step ("  stack      : {0}" -f ($_.ScriptStackTrace -replace "`r?`n", " | ")) Red
+        }
+        if ($LASTEXITCODE -ne $null) { Write-Step "  native exit: $LASTEXITCODE" Red }
+    }
+    throw $_
 }
 
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()

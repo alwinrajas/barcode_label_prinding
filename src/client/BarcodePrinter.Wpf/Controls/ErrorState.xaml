@@ -1,0 +1,20 @@
+<UserControl x:Class="BarcodePrinter.Wpf.Controls.ErrorState"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Name="self">
+    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="420">
+        <TextBlock Text="&#xE783;" FontFamily="Segoe MDL2 Assets" FontSize="32"
+                   HorizontalAlignment="Center" Foreground="{StaticResource Accent.Danger}" />
+        <TextBlock Style="{StaticResource Text.Body}" Margin="0,14,0,0" HorizontalAlignment="Center"
+                   TextAlignment="Center" TextWrapping="Wrap"
+                   Text="{Binding Message, ElementName=self}" />
+        <TextBlock Style="{StaticResource Text.Mono}" FontSize="12" Margin="0,8,0,0"
+                   HorizontalAlignment="Center" Foreground="{StaticResource Text.Secondary}"
+                   Text="{Binding Reference, ElementName=self, StringFormat=Reference: {0}}"
+                   Visibility="{Binding Reference, ElementName=self, Converter={StaticResource NullToCollapsed}}" />
+        <Button Style="{StaticResource Button.Secondary}" Margin="0,16,0,0"
+                HorizontalAlignment="Center" Content="Retry"
+                Command="{Binding RetryCommand, ElementName=self}"
+                Visibility="{Binding RetryCommand, ElementName=self, Converter={StaticResource NullToCollapsed}}" />
+    </StackPanel>
+</UserControl>

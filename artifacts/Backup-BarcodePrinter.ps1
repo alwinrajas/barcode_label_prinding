@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Backs up the Barcode Printer database, images, configuration and Data
     Protection key ring.

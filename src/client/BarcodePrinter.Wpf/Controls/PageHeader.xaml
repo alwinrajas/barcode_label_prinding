@@ -1,0 +1,20 @@
+<UserControl x:Class="BarcodePrinter.Wpf.Controls.PageHeader"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Name="self">
+    <Grid Margin="0,0,0,16">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+        </Grid.ColumnDefinitions>
+        <StackPanel VerticalAlignment="Center">
+            <TextBlock Style="{StaticResource Text.Display}" FontSize="22"
+                       Text="{Binding Title, ElementName=self}" />
+            <TextBlock Style="{StaticResource Text.Caption}" Margin="0,4,0,0" TextWrapping="Wrap"
+                       Text="{Binding Description, ElementName=self}"
+                       Visibility="{Binding Description, ElementName=self, Converter={StaticResource NullToCollapsed}}" />
+        </StackPanel>
+        <ContentPresenter Grid.Column="1" VerticalAlignment="Center" Margin="16,0,0,0"
+                          Content="{Binding Actions, ElementName=self}" />
+    </Grid>
+</UserControl>

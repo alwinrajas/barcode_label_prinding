@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using BarcodePrinter.Client.Core;
 using BarcodePrinter.Contracts.Admin;
+using BarcodePrinter.Wpf.Services;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 
@@ -28,6 +29,13 @@ public sealed partial class AuditViewModel : ObservableObject
     [ObservableProperty] private string? errorMessage;
     [ObservableProperty] private string? statusMessage;
     [ObservableProperty] private AuditEntryDto? selectedEntry;
+
+    // Screen states
+    [ObservableProperty] private bool isEmpty;
+    [ObservableProperty] private bool loadFailed;
+    [ObservableProperty] private string? loadErrorMessage;
+    [ObservableProperty] private string? loadErrorReference;
+    [ObservableProperty] private string? countText;
 
     [ObservableProperty] private string selectedRange = "Last 7 days";
     [ObservableProperty] private string? selectedAction;
@@ -85,29 +93,61 @@ public sealed partial class AuditViewModel : ObservableObject
             }
             _nextCursor = page.NextCursor;
             HasMore = page.HasMore;
+            IsEmpty = Entries.Count == 0;
             StatusMessage = Entries.Count == 0 ? "No audit entries match these filters." : null;
-        });
+            CountText = Entries.Count == 0
+                ? null
+                : HasMore
+                    ? $"Showing {Entries.Count} entries — more available"
+                    : $"Showing all {Entries.Count} entries";
+        }, isLoad: true);
     }
 
-    private async Task GuardAsync(Func<Task> action)
+    private async Task GuardAsync(Func<Task> action, bool isLoad = false)
     {
         IsBusy = true;
         ErrorMessage = null;
         try
         {
             await action();
+            if (isLoad)
+            {
+                LoadFailed = false;
+                LoadErrorMessage = null;
+                LoadErrorReference = null;
+            }
         }
         catch (ApiException ex)
         {
             ErrorMessage = ex.Message;
+            ToastService.Instance.Error(ex.Message, ex.CorrelationId);
+            if (isLoad)
+            {
+                SetLoadFailed(ex.Message, ex.CorrelationId);
+            }
         }
         catch (ApiUnreachableException)
         {
-            ErrorMessage = "Cannot reach the server. Check your network connection.";
+            const string message = "Cannot reach the server. Check your network connection.";
+            ErrorMessage = message;
+            ToastService.Instance.Error(message);
+            if (isLoad)
+            {
+                SetLoadFailed(message, null);
+            }
         }
         finally
         {
             IsBusy = false;
         }
+    }
+
+    private void SetLoadFailed(string message, string? reference)
+    {
+        LoadFailed = true;
+        LoadErrorMessage = message;
+        LoadErrorReference = reference;
+        IsEmpty = false;
+        StatusMessage = null;
     }
 }

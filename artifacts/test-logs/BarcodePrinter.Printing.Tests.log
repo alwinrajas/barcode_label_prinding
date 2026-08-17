@@ -6,6 +6,6 @@
   BarcodePrinter.Printing.Tests -> D:\Office\Projects\Barcode Printer\Barcode Printer\tests\BarcodePrinter.Printing.Tests\bin\Release\net10.0\BarcodePrinter.Printing.Tests.dll
 Test run for D:\Office\Projects\Barcode Printer\Barcode Printer\tests\BarcodePrinter.Printing.Tests\bin\Release\net10.0\BarcodePrinter.Printing.Tests.dll (.NETCoreApp,Version=v10.0)
 A total of 1 test files matched the specified pattern.
-No test is available in D:\Office\Projects\Barcode Printer\Barcode Printer\tests\BarcodePrinter.Printing.Tests\bin\Release\net10.0\BarcodePrinter.Printing.Tests.dll. Make sure that test discoverer & executors are registered and platform & framework version settings are appropriate and try again.
 
+Passed!  - Failed:     0, Passed:     9, Skipped:     0, Total:     9, Duration: 229 ms - BarcodePrinter.Printing.Tests.dll (net10.0)
 

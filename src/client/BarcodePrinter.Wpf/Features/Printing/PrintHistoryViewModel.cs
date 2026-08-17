@@ -1,9 +1,9 @@
 using System.Collections.ObjectModel;
-using System.Windows;
 using BarcodePrinter.Client.Core;
 using BarcodePrinter.Contracts;
 using BarcodePrinter.Contracts.Printing;
 using BarcodePrinter.Wpf.Features.Login;
+using BarcodePrinter.Wpf.Services;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 
@@ -25,7 +25,6 @@ public sealed partial class PrintHistoryViewModel : ObservableObject
     }
 
     public ObservableCollection<PrintJobDto> Jobs { get; } = [];
-    public IReadOnlyList<string> RangePresets { get; } = ["Today", "Last 7 days", "Last 30 days"];
     public IReadOnlyList<string> Statuses { get; } =
         ["", "Queued", "Dispatching", "Printing", "Completed", "Failed", "Cancelled"];
 
@@ -34,15 +33,24 @@ public sealed partial class PrintHistoryViewModel : ObservableObject
 
     [ObservableProperty] private bool isBusy;
     [ObservableProperty] private bool hasMore;
+    [ObservableProperty] private bool isEmpty;
     [ObservableProperty] private string? errorMessage;
-    [ObservableProperty] private string? statusMessage;
-    [ObservableProperty] private PrintJobDto? selectedJob;
-    [ObservableProperty] private string selectedRange = "Today";
+    [ObservableProperty] private string? errorReference;
+    [ObservableProperty] private string? countText;
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(ReprintCommand))]
+    [NotifyCanExecuteChangedFor(nameof(CancelJobCommand))]
+    private PrintJobDto? selectedJob;
+
+    [ObservableProperty] private DateTime? fromDate = DateTime.Today;
+    [ObservableProperty] private DateTime? toDate = DateTime.Today;
     [ObservableProperty] private string? selectedStatus;
     [ObservableProperty] private bool reprintsOnly;
     [ObservableProperty] private string searchText = "";
 
-    partial void OnSelectedRangeChanged(string value) => _ = SearchAsync();
+    partial void OnFromDateChanged(DateTime? value) => _ = SearchAsync();
+    partial void OnToDateChanged(DateTime? value) => _ = SearchAsync();
     partial void OnSelectedStatusChanged(string? value) => _ = SearchAsync();
     partial void OnReprintsOnlyChanged(bool value) => _ = SearchAsync();
     partial void OnSearchTextChanged(string value) => _ = DebouncedSearchAsync();
@@ -70,19 +78,16 @@ public sealed partial class PrintHistoryViewModel : ObservableObject
 
     private async Task LoadAsync(bool reset, CancellationToken ct)
     {
-        var from = SelectedRange switch
-        {
-            "Last 7 days" => DateTime.UtcNow.AddDays(-7),
-            "Last 30 days" => DateTime.UtcNow.AddDays(-30),
-            _ => DateTime.UtcNow.Date,
-        };
+        var from = (FromDate ?? DateTime.Today).Date.ToUniversalTime();
+        var to = (ToDate ?? DateTime.Today).Date.AddDays(1).ToUniversalTime();
 
         IsBusy = true;
         ErrorMessage = null;
+        ErrorReference = null;
         try
         {
             var page = await _api.HistoryAsync(
-                from, DateTime.UtcNow.AddDays(1),
+                from, to,
                 string.IsNullOrWhiteSpace(SelectedStatus) ? null : SelectedStatus,
                 ReprintsOnly, SearchText, reset ? null : _nextCursor, PageSize, ct);
 
@@ -100,15 +105,21 @@ public sealed partial class PrintHistoryViewModel : ObservableObject
             }
             _nextCursor = page.NextCursor;
             HasMore = page.HasMore;
-            StatusMessage = Jobs.Count == 0 ? "No print jobs match these filters." : null;
+            IsEmpty = Jobs.Count == 0;
+            CountText = Jobs.Count == 0 ? null
+                : HasMore ? $"Showing the first {Jobs.Count:N0} jobs"
+                : $"{Jobs.Count:N0} job{(Jobs.Count == 1 ? "" : "s")}";
         }
         catch (ApiException ex)
         {
             ErrorMessage = ex.Message;
+            ErrorReference = ex.CorrelationId;
+            IsEmpty = false;
         }
         catch (ApiUnreachableException)
         {
             ErrorMessage = "Cannot reach the server. Check your network connection.";
+            IsEmpty = false;
         }
         finally
         {
@@ -116,7 +127,9 @@ public sealed partial class PrintHistoryViewModel : ObservableObject
         }
     }
 
-    [RelayCommand]
+    private bool CanExecuteReprint() => SelectedJob is not null;
+
+    [RelayCommand(CanExecute = nameof(CanExecuteReprint))]
     private async Task ReprintAsync()
     {
         if (SelectedJob is not { } job)
@@ -124,38 +137,29 @@ public sealed partial class PrintHistoryViewModel : ObservableObject
             return;
         }
 
-        var confirmed = MessageBox.Show(
-            $"Reprint job {job.JobNo}?\n\n{job.ProductCode} · cartons {job.CartonFrom}–{job.CartonTo} " +
-            $"({job.LabelCount} labels)\n\nThe original labels are reproduced exactly, " +
-            "including the same carton numbers.",
-            "Confirm reprint", MessageBoxButton.OKCancel, MessageBoxImage.Question);
-        if (confirmed != MessageBoxResult.OK)
+        // C-15: whether the reason is mandatory is a server setting; the prompt
+        // is always offered and doubles as the confirmation step.
+        var reason = await DialogService.PromptAsync($"Reprint job {job.JobNo}", "Reason for reprint");
+        if (string.IsNullOrWhiteSpace(reason))
         {
-            return;
-        }
-
-        var reason = ReprintReasonPrompt.Ask(job.JobNo);
-        if (reason is null)
-        {
-            return;   // cancelled at the reason step
+            return;   // cancelled, or no reason given — abort
         }
 
         IsBusy = true;
-        ErrorMessage = null;
         try
         {
             var result = await _api.ReprintAsync(
                 new ReprintRequest(job.Id, reason, Environment.MachineName), CancellationToken.None);
-            StatusMessage = $"Reprint sent — job {result.JobNo}.";
+            ToastService.Instance.Success($"Reprint queued — job {result.JobNo}.");
             await LoadAsync(reset: true, CancellationToken.None);
         }
         catch (ApiException ex)
         {
-            ErrorMessage = ex.Message;
+            ToastService.Instance.Error(ex.Message, ex.CorrelationId);
         }
         catch (ApiUnreachableException)
         {
-            ErrorMessage = "Cannot reach the server. Check your network connection.";
+            ToastService.Instance.Error("Cannot reach the server. Check your network connection.");
         }
         finally
         {
@@ -163,15 +167,20 @@ public sealed partial class PrintHistoryViewModel : ObservableObject
         }
     }
 
-    [RelayCommand]
+    private bool CanExecuteCancelJob() => SelectedJob?.Status == "Queued";
+
+    [RelayCommand(CanExecute = nameof(CanExecuteCancelJob))]
     private async Task CancelJobAsync()
     {
         if (SelectedJob is not { } job)
         {
             return;
         }
-        if (MessageBox.Show($"Cancel job {job.JobNo}?", "Confirm",
-                MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+        var confirmed = await DialogService.ConfirmAsync(
+            $"Cancel job {job.JobNo}?",
+            $"{job.ProductCode} · {job.LabelCount} labels. The job is removed from the queue and will not print.",
+            "Cancel job", danger: true);
+        if (!confirmed)
         {
             return;
         }
@@ -179,65 +188,16 @@ public sealed partial class PrintHistoryViewModel : ObservableObject
         try
         {
             await _api.CancelAsync(job.Id, CancellationToken.None);
-            StatusMessage = "Job cancelled.";
+            ToastService.Instance.Success($"Job {job.JobNo} cancelled.");
             await LoadAsync(reset: true, CancellationToken.None);
         }
         catch (ApiException ex)
         {
-            ErrorMessage = ex.Message;
+            ToastService.Instance.Error(ex.Message, ex.CorrelationId);
         }
-    }
-}
-
-/// <summary>Small modal for the reprint reason (C-15: whether it is mandatory
-/// is a server setting; the prompt is always offered).</summary>
-public static class ReprintReasonPrompt
-{
-    public static string? Ask(string jobNo)
-    {
-        var window = new Window
+        catch (ApiUnreachableException)
         {
-            Title = $"Reprint {jobNo}",
-            Width = 420,
-            SizeToContent = SizeToContent.Height,
-            WindowStartupLocation = WindowStartupLocation.CenterOwner,
-            Owner = Application.Current.MainWindow,
-            ResizeMode = ResizeMode.NoResize,
-        };
-
-        var panel = new System.Windows.Controls.StackPanel { Margin = new Thickness(20) };
-        panel.Children.Add(new System.Windows.Controls.TextBlock
-        {
-            Text = "Reason for reprint (recorded in the audit log)",
-            Margin = new Thickness(0, 0, 0, 8),
-        });
-        var input = new System.Windows.Controls.TextBox { Height = 32, Padding = new Thickness(8, 0, 8, 0) };
-        panel.Children.Add(input);
-
-        var buttons = new System.Windows.Controls.StackPanel
-        {
-            Orientation = System.Windows.Controls.Orientation.Horizontal,
-            HorizontalAlignment = HorizontalAlignment.Right,
-            Margin = new Thickness(0, 16, 0, 0),
-        };
-        var ok = new System.Windows.Controls.Button
-        {
-            Content = "Reprint", Width = 100, Height = 32, IsDefault = true,
-        };
-        var cancel = new System.Windows.Controls.Button
-        {
-            Content = "Cancel", Width = 90, Height = 32,
-            Margin = new Thickness(8, 0, 0, 0), IsCancel = true,
-        };
-        buttons.Children.Add(ok);
-        buttons.Children.Add(cancel);
-        panel.Children.Add(buttons);
-        window.Content = panel;
-
-        string? result = null;
-        ok.Click += (_, _) => { result = input.Text; window.DialogResult = true; };
-        input.Focus();
-
-        return window.ShowDialog() == true ? result ?? "" : null;
+            ToastService.Instance.Error("Cannot reach the server. Check your network connection.");
+        }
     }
 }

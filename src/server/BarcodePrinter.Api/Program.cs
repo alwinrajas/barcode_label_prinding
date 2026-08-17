@@ -7,6 +7,7 @@ using BarcodePrinter.Api.Middleware;
 using BarcodePrinter.Infrastructure;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.IdentityModel.Tokens;
 using Serilog;
 
@@ -19,6 +20,15 @@ using Serilog;
 Log.Logger = new LoggerConfiguration()
     .WriteTo.Console()
     .CreateBootstrapLogger();
+
+// The service inherits the culture of whatever account Windows starts it under,
+// and an operator's custom short-date pattern then leaks into exports and logs
+// (observed in the field: "16 - 08 - 2026" instead of "16/08/2026"). Business
+// output must not depend on a machine setting, so the culture is pinned here —
+// en-GB to match the client and the dd/MM/yyyy label defaults.
+var serverCulture = System.Globalization.CultureInfo.GetCultureInfo("en-GB");
+System.Globalization.CultureInfo.DefaultThreadCurrentCulture = serverCulture;
+System.Globalization.CultureInfo.DefaultThreadCurrentUICulture = serverCulture;
 
 try
 {
@@ -48,6 +58,24 @@ try
         // put a password into a log file that is kept 30 days and backed up
         // off-box (§13).
         .Destructure.With<SecretRedactionPolicy>());
+
+    // Windows services must not rely on Data Protection's profile-based defaults.
+    // LocalMachine DPAPI keeps the key ring readable across service account password lifecycle events.
+    if (builder.Environment.IsProduction())
+    {
+        var keyRingPath = builder.Configuration["DataProtection:KeyRingPath"];
+        if (string.IsNullOrWhiteSpace(keyRingPath))
+        {
+            keyRingPath = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+                "BarcodePrinter", "keys");
+        }
+        SanitizeKeyRing(keyRingPath, Log.Logger);
+        builder.Services.AddDataProtection()
+            .SetApplicationName("Barcode Label Printing")
+            .PersistKeysToFileSystem(new DirectoryInfo(keyRingPath))
+            .ProtectKeysWithDpapi(protectToLocalMachine: true);
+    }
 
     builder.Services.AddBarcodePrinterInfrastructure(builder.Configuration);
 
@@ -233,4 +261,59 @@ finally
 }
 
 // Exposed for WebApplicationFactory in integration tests.
-public partial class Program;
+public partial class Program
+{
+    private static void SanitizeKeyRing(string keyRingPath, Serilog.ILogger logger)
+    {
+        try
+        {
+            if (!Directory.Exists(keyRingPath))
+            {
+                Directory.CreateDirectory(keyRingPath);
+                return;
+            }
+
+            var xmlFiles = Directory.GetFiles(keyRingPath, "*.xml");
+            string? quarantineDir = null;
+
+            foreach (var file in xmlFiles)
+            {
+                try
+                {
+                    var content = File.ReadAllText(file);
+                    if (content.Contains("DpapiXmlDecryptor"))
+                    {
+                        var match = System.Text.RegularExpressions.Regex.Match(content, @"<value>([^<]+)</value>");
+                        if (match.Success)
+                        {
+                            var cipherBytes = Convert.FromBase64String(match.Groups[1].Value.Trim());
+                            try
+                            {
+#pragma warning disable CA1416
+                                System.Security.Cryptography.ProtectedData.Unprotect(
+                                    cipherBytes, null, System.Security.Cryptography.DataProtectionScope.CurrentUser);
+#pragma warning restore CA1416
+                            }
+                            catch (System.Security.Cryptography.CryptographicException ex)
+                            {
+                                quarantineDir ??= Directory.CreateDirectory(Path.Combine(keyRingPath, "quarantine")).FullName;
+                                var fileName = Path.GetFileName(file);
+                                var destPath = Path.Combine(quarantineDir, $"{fileName}.quarantine-{DateTime.UtcNow:yyyyMMddHHmmss}.bak");
+                                File.Move(file, destPath);
+                                logger.Warning(ex, "[DataProtection] Quarantined unreadable DPAPI key file '{FileName}' to '{QuarantinePath}'. A new machine-scoped key will be generated.", fileName, destPath);
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    logger.Warning(ex, "[DataProtection] Preflight error checking key file '{File}'.", file);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.Warning(ex, "[DataProtection] Preflight key ring sanitization encountered an issue.");
+        }
+    }
+}

@@ -4,10 +4,10 @@ D:\Office\Projects\Barcode Printer\Barcode Printer\tests\BarcodePrinter.Integrat
 D:\Office\Projects\Barcode Printer\Barcode Printer\tests\BarcodePrinter.Integration.Tests\BarcodePrinter.Integration.Tests.csproj : warning NU1903: Package 'SSH.NET' 2025.1.0 has a known high severity vulnerability, https://github.com/advisories/GHSA-q939-rpr3-3284
   BarcodePrinter.Contracts -> D:\Office\Projects\Barcode Printer\Barcode Printer\src\shared\BarcodePrinter.Contracts\bin\Release\net10.0\BarcodePrinter.Contracts.dll
   BarcodePrinter.Domain -> D:\Office\Projects\Barcode Printer\Barcode Printer\src\server\BarcodePrinter.Domain\bin\Release\net10.0\BarcodePrinter.Domain.dll
-  BarcodePrinter.Printing.Abstractions -> D:\Office\Projects\Barcode Printer\Barcode Printer\src\server\BarcodePrinter.Printing.Abstractions\bin\Release\net10.0\BarcodePrinter.Printing.Abstractions.dll
   BarcodePrinter.Labels -> D:\Office\Projects\Barcode Printer\Barcode Printer\src\server\BarcodePrinter.Labels\bin\Release\net10.0\BarcodePrinter.Labels.dll
-  BarcodePrinter.Application -> D:\Office\Projects\Barcode Printer\Barcode Printer\src\server\BarcodePrinter.Application\bin\Release\net10.0\BarcodePrinter.Application.dll
+  BarcodePrinter.Printing.Abstractions -> D:\Office\Projects\Barcode Printer\Barcode Printer\src\server\BarcodePrinter.Printing.Abstractions\bin\Release\net10.0\BarcodePrinter.Printing.Abstractions.dll
   BarcodePrinter.Printing.Server -> D:\Office\Projects\Barcode Printer\Barcode Printer\src\server\BarcodePrinter.Printing.Server\bin\Release\net10.0\BarcodePrinter.Printing.Server.dll
+  BarcodePrinter.Application -> D:\Office\Projects\Barcode Printer\Barcode Printer\src\server\BarcodePrinter.Application\bin\Release\net10.0\BarcodePrinter.Application.dll
   BarcodePrinter.Integration.Oracle -> D:\Office\Projects\Barcode Printer\Barcode Printer\src\server\BarcodePrinter.Integration.Oracle\bin\Release\net10.0\BarcodePrinter.Integration.Oracle.dll
   BarcodePrinter.DbMigrator -> D:\Office\Projects\Barcode Printer\Barcode Printer\src\tools\BarcodePrinter.DbMigrator\bin\Release\net10.0\BarcodePrinter.DbMigrator.dll
   BarcodePrinter.Infrastructure -> D:\Office\Projects\Barcode Printer\Barcode Printer\src\server\BarcodePrinter.Infrastructure\bin\Release\net10.0\BarcodePrinter.Infrastructure.dll
@@ -18,5 +18,5 @@ D:\Office\Projects\Barcode Printer\Barcode Printer\tests\BarcodePrinter.Integrat
 Test run for D:\Office\Projects\Barcode Printer\Barcode Printer\tests\BarcodePrinter.Integration.Tests\bin\Release\net10.0\BarcodePrinter.Integration.Tests.dll (.NETCoreApp,Version=v10.0)
 A total of 1 test files matched the specified pattern.
 
-Passed!  - Failed:     0, Passed:   124, Skipped:     0, Total:   124, Duration: 2 m 26 s - BarcodePrinter.Integration.Tests.dll (net10.0)
+Passed!  - Failed:     0, Passed:   134, Skipped:     0, Total:   134, Duration: 2 m 30 s - BarcodePrinter.Integration.Tests.dll (net10.0)
 

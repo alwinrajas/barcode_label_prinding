@@ -25,8 +25,11 @@ public sealed class ReportExport(ReportQueries queries)
 
         var from = filter.FromUtc ?? DateTime.UtcNow.AddDays(-7);
         var to = filter.ToUtc ?? DateTime.UtcNow;
-        sheet.Cell(2, 1).Value = $"Period: {from:dd/MM/yyyy} to {to:dd/MM/yyyy}";
-        sheet.Cell(3, 1).Value = $"Generated: {DateTime.Now:dd/MM/yyyy HH:mm} by {generatedBy}";
+        // Invariant: a machine whose short-date pattern is customised would
+        // otherwise stamp "16 - 08 - 2026" onto a document sent to a customer.
+        sheet.Cell(2, 1).Value = FormattableString.Invariant($"Period: {from:dd/MM/yyyy} to {to:dd/MM/yyyy}");
+        sheet.Cell(3, 1).Value = FormattableString.Invariant(
+            $"Generated: {DateTime.Now:dd/MM/yyyy HH:mm} by {generatedBy}");
         sheet.Cell(3, 1).Style.Font.FontColor = XLColor.Gray;
 
         var headerRow = 5;
@@ -47,7 +50,7 @@ public sealed class ReportExport(ReportQueries queries)
             if (isDetail)
             {
                 sheet.Cell(row, column++).Value = item.JobNo;
-                sheet.Cell(row, column++).Value = item.RequestedAtUtc?.ToLocalTime().ToString("dd/MM/yyyy HH:mm");
+                sheet.Cell(row, column++).Value = item.RequestedAtUtc?.ToLocalTime().ToString("dd/MM/yyyy HH:mm", System.Globalization.CultureInfo.InvariantCulture);
                 sheet.Cell(row, column++).Value = item.Key;
                 sheet.Cell(row, column++).Value = item.Secondary;
                 sheet.Cell(row, column++).Value = item.Batch;
@@ -65,7 +68,7 @@ public sealed class ReportExport(ReportQueries queries)
                 sheet.Cell(row, column++).Value = item.Cartons;
                 sheet.Cell(row, column++).Value = item.Failed;
                 sheet.Cell(row, column++).Value = item.Reprints;
-                sheet.Cell(row, column).Value = item.LastPrintedUtc?.ToLocalTime().ToString("dd/MM/yyyy HH:mm");
+                sheet.Cell(row, column).Value = item.LastPrintedUtc?.ToLocalTime().ToString("dd/MM/yyyy HH:mm", System.Globalization.CultureInfo.InvariantCulture);
             }
             row++;
         }

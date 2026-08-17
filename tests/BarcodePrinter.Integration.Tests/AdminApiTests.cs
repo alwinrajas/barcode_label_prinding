@@ -308,6 +308,22 @@ public class AdminApiTests(ApiFixture fx) : IAsyncLifetime
 
     // ---- helpers ----------------------------------------------------------------------------
 
+    [Fact]
+    public async Task Audit_export_returns_a_workbook()
+    {
+        // The route and its permission existed but nothing was mapped to them,
+        // so this download used to 404.
+        var response = await _admin.GetAsync(ApiRoutes.Audit.Export);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.Content.Headers.ContentType!.MediaType.Should()
+            .Be("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+
+        var bytes = await response.Content.ReadAsByteArrayAsync();
+        bytes.Should().HaveCountGreaterThan(4);
+        bytes[..2].Should().Equal([0x50, 0x4B], "an xlsx is a zip container");
+    }
+
     private async Task<long> CreateUserAsync(string username, string password, long? roleId = null)
     {
         var response = await _admin.PostAsJsonAsync(ApiRoutes.Users.Base,

@@ -1,10 +1,12 @@
 using System.Collections.ObjectModel;
-using System.Windows;
+using System.ComponentModel;
+using System.Windows.Data;
 using BarcodePrinter.Client.Core;
 using BarcodePrinter.Contracts;
 using BarcodePrinter.Contracts.Admin;
 using BarcodePrinter.Contracts.Auth;
 using BarcodePrinter.Wpf.Features.Login;
+using BarcodePrinter.Wpf.Services;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 
@@ -22,8 +24,14 @@ public sealed partial class RoleCheck(long id, string code, string name) : Obser
 
 public sealed partial class UsersViewModel : ObservableObject
 {
+    /// <summary>Edit-form properties that flip the drawer's dirty flag.</summary>
+    private static readonly HashSet<string> DirtyProps =
+        [nameof(EditUsername), nameof(EditFullName), nameof(EditEmail)];
+
     private readonly AdminApi _api;
     private readonly Session _session;
+    private readonly ICollectionView _usersView;
+    private bool _suppressDirty;
 
     public UsersViewModel(AdminApi api, Session session)
     {
@@ -33,6 +41,8 @@ public sealed partial class UsersViewModel : ObservableObject
         CanEdit = session.Has(PermissionCodes.UserEdit);
         CanDeactivate = session.Has(PermissionCodes.UserDeactivate);
         CanResetPassword = session.Has(PermissionCodes.UserResetPassword);
+        _usersView = CollectionViewSource.GetDefaultView(Users);
+        _usersView.Filter = MatchesSearch;
         _ = LoadAsync();
     }
 
@@ -49,15 +59,53 @@ public sealed partial class UsersViewModel : ObservableObject
     [ObservableProperty] private string? errorMessage;
     [ObservableProperty] private UserSummary? selectedUser;
 
+    // Screen states
+    [ObservableProperty] private bool isEmpty;
+    [ObservableProperty] private bool loadFailed;
+    [ObservableProperty] private string? loadErrorMessage;
+    [ObservableProperty] private string? loadErrorReference;
+
+    // Client-side search over the fully loaded list (the API returns all users).
+    [ObservableProperty] private string searchText = "";
+
     // Editor state
     [ObservableProperty] private bool isEditorOpen;
     [ObservableProperty] private bool isNewUser;
+    [ObservableProperty] private bool isDirty;
     [ObservableProperty] private long editingId;
     [ObservableProperty] private string editUsername = "";
     [ObservableProperty] private string editFullName = "";
     [ObservableProperty] private string? editEmail;
     [ObservableProperty] private string editorTitle = "";
     private string? _concurrencyStamp;
+
+    partial void OnSearchTextChanged(string value)
+    {
+        _usersView.Refresh();
+        IsEmpty = !LoadFailed && _usersView.IsEmpty;
+    }
+
+    private bool MatchesSearch(object item)
+    {
+        if (string.IsNullOrWhiteSpace(SearchText) || item is not UserSummary user)
+        {
+            return true;
+        }
+        var term = SearchText.Trim();
+        return user.Username.Contains(term, StringComparison.OrdinalIgnoreCase)
+            || user.FullName.Contains(term, StringComparison.OrdinalIgnoreCase)
+            || (user.Email?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false)
+            || user.Roles.Any(r => r.Contains(term, StringComparison.OrdinalIgnoreCase));
+    }
+
+    protected override void OnPropertyChanged(PropertyChangedEventArgs e)
+    {
+        base.OnPropertyChanged(e);
+        if (!_suppressDirty && IsEditorOpen && e.PropertyName is not null && DirtyProps.Contains(e.PropertyName))
+        {
+            IsDirty = true;
+        }
+    }
 
     async partial void OnSelectedUserChanged(UserSummary? value)
     {
@@ -75,11 +123,22 @@ public sealed partial class UsersViewModel : ObservableObject
             Roles.Clear();
             foreach (var role in roles)
             {
-                Roles.Add(new RoleCheck(role.Id, role.Code, role.Name));
+                var check = new RoleCheck(role.Id, role.Code, role.Name);
+                check.PropertyChanged += (_, args) =>
+                {
+                    if (args.PropertyName == nameof(RoleCheck.IsSelected) && !_suppressDirty && IsEditorOpen)
+                    {
+                        IsDirty = true;
+                    }
+                };
+                Roles.Add(check);
             }
             await RefreshUsersAsync();
-        });
+        }, isLoad: true);
     }
+
+    [RelayCommand]
+    private Task RetryLoadAsync() => LoadAsync();
 
     [RelayCommand]
     private async Task RefreshUsersAsync()
@@ -90,25 +149,36 @@ public sealed partial class UsersViewModel : ObservableObject
         {
             Users.Add(user);
         }
+        IsEmpty = _usersView.IsEmpty;
     }
 
     [RelayCommand]
     private void NewUser()
     {
-        SelectedUser = null;
-        IsNewUser = true;
-        IsEditorOpen = true;
-        EditorTitle = "New user";
-        EditingId = 0;
-        EditUsername = "";
-        EditFullName = "";
-        EditEmail = null;
-        _concurrencyStamp = null;
-        foreach (var role in Roles)
+        _suppressDirty = true;
+        try
         {
-            role.IsSelected = false;
+            SelectedUser = null;
+            IsNewUser = true;
+            IsEditorOpen = true;
+            EditorTitle = "New user";
+            EditingId = 0;
+            EditUsername = "";
+            EditFullName = "";
+            EditEmail = null;
+            _concurrencyStamp = null;
+            foreach (var role in Roles)
+            {
+                role.IsSelected = false;
+            }
+            ErrorMessage = null;
+            StatusMessage = null;
         }
-        ErrorMessage = null;
+        finally
+        {
+            _suppressDirty = false;
+        }
+        IsDirty = false;
     }
 
     private async Task OpenEditorAsync(long id)
@@ -116,21 +186,50 @@ public sealed partial class UsersViewModel : ObservableObject
         await GuardAsync(async () =>
         {
             var detail = await _api.GetUserAsync(id, CancellationToken.None);
-            IsNewUser = false;
-            IsEditorOpen = true;
-            EditorTitle = $"Edit {detail.Username}";
-            EditingId = detail.Id;
-            EditUsername = detail.Username;
-            EditFullName = detail.FullName;
-            EditEmail = detail.Email;
-            _concurrencyStamp = detail.ConcurrencyStamp;
-            foreach (var role in Roles)
+            _suppressDirty = true;
+            try
             {
-                role.IsSelected = detail.RoleIds.Contains(role.Id);
+                IsNewUser = false;
+                IsEditorOpen = true;
+                EditorTitle = $"Edit {detail.Username}";
+                EditingId = detail.Id;
+                EditUsername = detail.Username;
+                EditFullName = detail.FullName;
+                EditEmail = detail.Email;
+                _concurrencyStamp = detail.ConcurrencyStamp;
+                foreach (var role in Roles)
+                {
+                    role.IsSelected = detail.RoleIds.Contains(role.Id);
+                }
+                ErrorMessage = null;
+                StatusMessage = null;
             }
-            ErrorMessage = null;
-            StatusMessage = null;
+            finally
+            {
+                _suppressDirty = false;
+            }
+            IsDirty = false;
         });
+    }
+
+    /// <summary>Drawer close (X / Cancel / Escape) with a discard confirm when
+    /// there are unsaved edits.</summary>
+    [RelayCommand]
+    private async Task CloseEditorAsync()
+    {
+        if (!IsEditorOpen)
+        {
+            return;
+        }
+        if (IsDirty && !await DialogService.ConfirmAsync(
+                "Discard changes?", "You have unsaved changes. Close the editor without saving?",
+                "Discard", danger: true))
+        {
+            return;
+        }
+        IsEditorOpen = false;
+        IsDirty = false;
+        SelectedUser = null;
     }
 
     [RelayCommand]
@@ -155,7 +254,8 @@ public sealed partial class UsersViewModel : ObservableObject
                 {
                     clear.Clear();
                 }
-                StatusMessage = $"User created. They must change this password at first sign-in.";
+                ToastService.Instance.Success(
+                    "User created. They must change this password at first sign-in.");
                 await RefreshUsersAsync();
                 await OpenEditorAsync(id);
             }
@@ -164,7 +264,7 @@ public sealed partial class UsersViewModel : ObservableObject
                 await _api.UpdateUserAsync(EditingId, new UpdateUserRequest(
                     EditFullName.Trim(), EditEmail, selectedRoles, _concurrencyStamp!),
                     CancellationToken.None);
-                StatusMessage = "Saved.";
+                ToastService.Instance.Success("User saved.");
                 await RefreshUsersAsync();
                 await OpenEditorAsync(EditingId);
             }
@@ -180,8 +280,10 @@ public sealed partial class UsersViewModel : ObservableObject
         }
         var target = !SelectedUser.IsActive;
         var verb = target ? "Activate" : "Deactivate";
-        if (MessageBox.Show($"{verb} user {SelectedUser.Username}?", "Confirm",
-                MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+        var message = target
+            ? $"Activate user {SelectedUser.Username}?"
+            : $"Deactivate user {SelectedUser.Username}? Their sessions will be ended.";
+        if (!await DialogService.ConfirmAsync($"{verb} user", message, verb, danger: !target))
         {
             return;
         }
@@ -190,7 +292,9 @@ public sealed partial class UsersViewModel : ObservableObject
         await GuardAsync(async () =>
         {
             await _api.SetUserActiveAsync(id, target, CancellationToken.None);
-            StatusMessage = target ? "User activated." : "User deactivated — their sessions were ended.";
+            ToastService.Instance.Success(target
+                ? "User activated."
+                : "User deactivated — their sessions were ended.");
             await RefreshUsersAsync();
         });
     }
@@ -207,8 +311,9 @@ public sealed partial class UsersViewModel : ObservableObject
             ErrorMessage = "Enter the new password.";
             return;
         }
-        if (MessageBox.Show($"Reset the password for {EditUsername}? Their sessions will end and they must set a new password at next sign-in.",
-                "Confirm", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
+        if (!await DialogService.ConfirmAsync("Reset password",
+                $"Reset the password for {EditUsername}? Their sessions will end and they must set a new password at next sign-in.",
+                "Reset", danger: true))
         {
             return;
         }
@@ -217,31 +322,56 @@ public sealed partial class UsersViewModel : ObservableObject
         {
             await _api.ResetPasswordAsync(EditingId, box.Password, CancellationToken.None);
             box.Clear();
-            StatusMessage = "Password reset.";
+            ToastService.Instance.Success(
+                "Password reset. The user must set a new password at next sign-in.");
         });
     }
 
-    private async Task GuardAsync(Func<Task> action)
+    private async Task GuardAsync(Func<Task> action, bool isLoad = false)
     {
         IsBusy = true;
         ErrorMessage = null;
         try
         {
             await action();
+            if (isLoad)
+            {
+                LoadFailed = false;
+                LoadErrorMessage = null;
+                LoadErrorReference = null;
+            }
         }
         catch (ApiException ex)
         {
-            ErrorMessage = ex.Code == ErrorCodes.ConcurrencyConflict
+            var message = ex.Code == ErrorCodes.ConcurrencyConflict
                 ? "This user was changed by someone else. Reopen the record to see their changes."
                 : ex.Message;
+            ToastService.Instance.Error(message, ex.CorrelationId);
+            if (isLoad)
+            {
+                SetLoadFailed(message, ex.CorrelationId);
+            }
         }
         catch (ApiUnreachableException)
         {
-            ErrorMessage = "Cannot reach the server. Check your network connection.";
+            const string message = "Cannot reach the server. Check your network connection.";
+            ToastService.Instance.Error(message);
+            if (isLoad)
+            {
+                SetLoadFailed(message, null);
+            }
         }
         finally
         {
             IsBusy = false;
         }
+    }
+
+    private void SetLoadFailed(string message, string? reference)
+    {
+        LoadFailed = true;
+        LoadErrorMessage = message;
+        LoadErrorReference = reference;
+        IsEmpty = false;
     }
 }

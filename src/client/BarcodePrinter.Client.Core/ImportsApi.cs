@@ -26,16 +26,21 @@ public sealed class ImportsApi(ApiClient api)
     public Task CancelAsync(long batchId, CancellationToken ct) =>
         api.PostAsync(ApiRoutes.Imports.Cancel(batchId), ct);
 
-    public async Task<long> UploadAsync(string filePath, CancellationToken ct)
+    /// <summary>Content factory per attempt so ApiClient can refresh an
+    /// expired token and retry — a fresh stream is opened each time and the
+    /// upload progress restarts from zero on the (rare) retry.</summary>
+    public async Task<long> UploadAsync(string filePath, IProgress<double>? progress, CancellationToken ct)
     {
-        using var content = new MultipartFormDataContent();
-        await using var file = File.OpenRead(filePath);
-        var part = new StreamContent(file);
-        part.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-        content.Add(part, "file", Path.GetFileName(filePath));
-        var accepted = await api.PostMultipartAsync<ImportAcceptedResponse>(
-            $"{ApiRoutes.Imports.Base}/", content, ct);
+        var length = new FileInfo(filePath).Length;
+        var accepted = await api.PostMultipartAsync<ImportAcceptedResponse>($"{ApiRoutes.Imports.Base}/", () =>
+        {
+            var content = new MultipartFormDataContent();
+            var part = new StreamContent(new ProgressStream(File.OpenRead(filePath), length, progress));
+            part.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+            content.Add(part, "file", Path.GetFileName(filePath));
+            return content;
+        }, ct);
         return accepted.BatchId;
     }
 

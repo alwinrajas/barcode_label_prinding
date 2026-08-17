@@ -15,7 +15,10 @@ using SkiaSharp;
 
 namespace BarcodePrinter.Infrastructure.Printing;
 
-public sealed record LabelPreview(byte[]? Png, string Zpl, string Format, string? Unavailable);
+/// <summary>Warning flags a label that will render but with a defect the
+/// operator should know about (e.g. a blank feedback QR).</summary>
+public sealed record LabelPreview(
+    byte[]? Png, string Zpl, string Format, string? Unavailable, string? Warning = null);
 
 /// <summary>
 /// Produces the print screen's preview.
@@ -39,18 +42,20 @@ public sealed class LabelPreviewService(
     {
         await using var conn = await connections.OpenAsync(ct);
         var product = await LoadProductAsync(conn, request.ProductId, ct);
+        var templateId = await TemplateResolver.ResolveAsync(
+            conn, request.TemplateId, request.ProductId, request.PrinterId, ct);
 
         // The ZPL is produced by the real render path, so what the preview shows
         // and what the printer receives cannot diverge.
         var zpl = await renderer.RenderPreviewAsync(
-            request.TemplateId, product,
+            templateId, product,
             request.Batch ?? product.DefaultBatch,
             request.ProductionDate ?? product.DefaultProductionDate,
             request.ExpiryDate ?? product.DefaultExpiryDate,
             request.QuantityText ?? product.DefaultQuantityText,
             request.CartonNumber ?? 1, request.CartonTotal ?? 1, conn, ct);
 
-        var template = await LoadDefinitionAsync(conn, request.TemplateId, ct);
+        var template = await LoadDefinitionAsync(conn, templateId, ct);
         if (template is null)
         {
             // A client-supplied printer file: we hold no geometry model for it,
@@ -61,7 +66,7 @@ public sealed class LabelPreviewService(
                 "The label data below is exactly what will be sent to the printer.");
         }
 
-        var (definition, mappings) = template.Value;
+        var (definition, mappings, fields) = template.Value;
 
         try
         {
@@ -69,19 +74,56 @@ public sealed class LabelPreviewService(
             var bound = binder.Bind(mappings, context);
 
             // Values arrive keyed by placeholder; the rasteriser draws elements,
-            // so re-key by element id using the adapter's own ordering.
+            // so re-key by element id via the registration-time field index —
+            // the same association the print path uses, so preview and print
+            // cannot bind the same value to different elements.
             var bindable = NativeTemplateAdapter.BindableElements(definition);
+            var placeholderByElementId = TemplateRenderService.MapPlaceholdersToElements(fields, bindable);
             var byElement = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            for (var i = 0; i < bindable.Count && i < mappings.Count; i++)
+            foreach (var (elementId, placeholder) in placeholderByElementId)
             {
-                if (bound.TryGetValue(mappings[i].PlaceholderRef, out var value))
+                if (bound.TryGetValue(placeholder, out var value))
                 {
-                    byElement[bindable[i].Id] = value;
+                    byElement[elementId] = value;
                 }
             }
 
-            var png = rasterizer.RenderPng(definition, byElement, LoadImage);
-            return new LabelPreview(png, zpl, NativeTemplateAdapter.FormatName, null);
+            byte[] png;
+            var loaded = new List<SKBitmap>();
+            try
+            {
+                png = rasterizer.RenderPng(definition, byElement, LoadImage);
+            }
+            finally
+            {
+                // The loader owns bitmap lifetime (the rasterizer draws only).
+                foreach (var bitmap in loaded)
+                {
+                    bitmap.Dispose();
+                }
+            }
+            return new LabelPreview(png, zpl, NativeTemplateAdapter.FormatName, null,
+                await BuildWarningAsync(definition, mappings, product, ct));
+
+            SKBitmap? LoadImage(string hash)
+            {
+                try
+                {
+                    using var stream = imageStore
+                        .OpenAsync(hash, ImageVariant.Full, ct).GetAwaiter().GetResult();
+                    var bitmap = stream is null ? null : SKBitmap.Decode(stream);
+                    if (bitmap is not null)
+                    {
+                        loaded.Add(bitmap);
+                    }
+                    return bitmap;
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(ex, "Preview could not load product image {Hash}", hash);
+                    return null;
+                }
+            }
         }
         catch (FieldBindingException ex)
         {
@@ -89,21 +131,42 @@ public sealed class LabelPreviewService(
             // reason to preview at all — report it, do not throw a 500.
             return new LabelPreview(null, zpl, NativeTemplateAdapter.FormatName, ex.Message);
         }
+    }
 
-        SKBitmap? LoadImage(string hash)
+    /// <summary>Defects the operator should know about BEFORE a 500-carton run:
+    /// things that render on screen but would come out wrong (or missing) on
+    /// the physical label. Reported together so one does not mask another.</summary>
+    private async Task<string?> BuildWarningAsync(
+        LabelDefinition definition, IReadOnlyList<FieldMapping> mappings,
+        ProductSnapshot product, CancellationToken ct)
+    {
+        var warnings = new List<string>();
+
+        if (mappings.Any(m => string.Equals(
+                m.DataKey, TokenVocabulary.FeedbackUrlKey, StringComparison.OrdinalIgnoreCase)) &&
+            string.IsNullOrWhiteSpace(await settings.GetAsync("Label:FeedbackFormUrl", ct)))
         {
-            try
+            warnings.Add("The feedback QR code will be blank — no feedback form URL is configured. " +
+                         "An administrator can set it under Settings.");
+        }
+
+        // The on-screen rasteriser draws any size; the ZPL converter refuses
+        // images beyond its dot limit. Without this the preview would show a
+        // picture the printer silently omits.
+        if (!string.IsNullOrWhiteSpace(product.ImageHash))
+        {
+            var oversized = definition.Elements.OfType<ImageElement>().Any(e =>
+                definition.MmToDots(e.WidthMm) > ZplImageConverter.MaxDots ||
+                definition.MmToDots(e.HeightMm) > ZplImageConverter.MaxDots);
+            if (oversized)
             {
-                using var stream = imageStore
-                    .OpenAsync(hash, ImageVariant.Full, ct).GetAwaiter().GetResult();
-                return stream is null ? null : SKBitmap.Decode(stream);
-            }
-            catch (Exception ex)
-            {
-                logger.LogWarning(ex, "Preview could not load product image {Hash}", hash);
-                return null;
+                warnings.Add("The product image is too large to print at this label's resolution " +
+                             "and will be left blank. Ask an administrator to reduce the image area " +
+                             "on the template.");
             }
         }
+
+        return warnings.Count == 0 ? null : string.Join(" ", warnings);
     }
 
     private async Task<PrintContext> BuildContextAsync(
@@ -135,8 +198,10 @@ public sealed class LabelPreviewService(
     }
 
     /// <summary>Definition plus mapping for a Native template; null when the
-    /// template is a supplied printer file.</summary>
-    private static async Task<(LabelDefinition Definition, IReadOnlyList<FieldMapping> Mappings)?>
+    /// template is a supplied printer file. The raw field rows travel along so
+    /// the caller can re-key placeholders to elements the way the print path does.</summary>
+    private static async Task<(LabelDefinition Definition, IReadOnlyList<FieldMapping> Mappings,
+            IReadOnlyList<TemplateFieldRow> Fields)?>
         LoadDefinitionAsync(MySqlConnection conn, long templateId, CancellationToken ct)
     {
         var row = await conn.QuerySingleOrDefaultAsync<DefinitionRow>(new CommandDefinition(
@@ -175,7 +240,7 @@ public sealed class LabelPreviewService(
             IsRequired: false,
             f.FallbackValue)).ToList();
 
-        return (LabelDefinition.Parse(Encoding.UTF8.GetString(row.Artifact)), mappings);
+        return (LabelDefinition.Parse(Encoding.UTF8.GetString(row.Artifact)), mappings, fields);
     }
 
     private static async Task<ProductSnapshot> LoadProductAsync(

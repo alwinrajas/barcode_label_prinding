@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Removes the API service, its firewall rule and the backup schedule.
 

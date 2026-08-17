@@ -50,6 +50,8 @@ public sealed class PrintJobService(
         var product = await LoadProductAsync(conn, request.ProductId, ct);
         var printer = await LoadPrinterAsync(conn, request.PrinterId, ct);
         var strategy = await strategies.ResolveAsync(ct);
+        var templateId = await TemplateResolver.ResolveAsync(
+            conn, request.TemplateId, request.ProductId, request.PrinterId, ct);
 
         // Effective values: master defaults overridden by what the operator
         // typed on the print screen (A-9). What we snapshot is what prints.
@@ -101,8 +103,8 @@ public sealed class PrintJobService(
             """,
             new
             {
-                jobNo, actor.UserId, request.PrinterId, request.TemplateId,
-                templateVersion = await CurrentTemplateVersionAsync(conn, request.TemplateId, tx, ct),
+                jobNo, actor.UserId, request.PrinterId, TemplateId = templateId,
+                templateVersion = await CurrentTemplateVersionAsync(conn, templateId, tx, ct),
                 request.ProductId,
                 product.Code, product.Description, product.BarcodeValue, product.Uom,
                 product.Size, product.Color, batch, productionDate, expiryDate,
@@ -116,6 +118,19 @@ public sealed class PrintJobService(
                 correlationId,
             }, transaction: tx, cancellationToken: ct));
 
+        // A printer that speaks no ZPL must not be sent ZPL: raw-spooling a
+        // stored format to an office printer emits pages of "^XA^FO40,40…"
+        // instead of labels. printers.language records what the device speaks,
+        // so the mismatch is a configuration error we can name up front.
+        if (printer.ConnectionType != "WindowsGraphics" &&
+            string.Equals(printer.Language, "Windows", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new DomainException("PRINTER_LANGUAGE_MISMATCH",
+                $"Printer '{printer.Name}' is configured as a Windows printer but would receive " +
+                "label-printer commands. Ask an administrator to set its connection type to " +
+                "Windows (graphics), or its language to ZPL for a label printer.");
+        }
+
         // Render every label now (§8.2): a bad template or a missing required
         // field fails here, in front of the user — never mid-run at the printer.
         // An office printer cannot interpret ZPL, so a job aimed at one is
@@ -124,11 +139,11 @@ public sealed class PrintJobService(
         // the transport differ (§7.2).
         var payload = printer.ConnectionType == "WindowsGraphics"
             ? await renderer.RenderRasterJobAsync(
-                request.TemplateId, product, batch, productionDate, expiryDate, quantityText,
+                templateId, product, batch, productionDate, expiryDate, quantityText,
                 allocation, strategy, jobNo, actor.Username, printer.Name,
                 request.CopiesPerLabel, printer.Dpi, conn, tx, ct)
             : await renderer.RenderJobAsync(
-                request.TemplateId, product, batch, productionDate, expiryDate, quantityText,
+                templateId, product, batch, productionDate, expiryDate, quantityText,
                 allocation, strategy, jobNo, actor.Username, printer.Name,
                 request.CopiesPerLabel, isReprint: false, conn, tx, ct);
 
@@ -148,7 +163,8 @@ public sealed class PrintJobService(
 
         await queue.EnqueueAsync(jobId, ct);
 
-        return new PrintJobCreatedResponse(jobId, jobNo, allocation.From, allocation.To, labelCount);
+        return new PrintJobCreatedResponse(jobId, jobNo, allocation.From, allocation.To, labelCount,
+            printer.DispatchMode, printer.OwnerWorkstation);
     }
 
     /// <summary>
@@ -355,7 +371,8 @@ public sealed class PrintJobService(
         await conn.QuerySingleOrDefaultAsync<PrinterRow>(new CommandDefinition(
             """
             SELECT CAST(id AS SIGNED) AS Id, name AS Name, dispatch_mode AS DispatchMode,
-                   connection_type AS ConnectionType, dpi AS Dpi, is_active AS IsActive
+                   connection_type AS ConnectionType, dpi AS Dpi, is_active AS IsActive,
+                   owner_workstation AS OwnerWorkstation, language AS Language
             FROM printers WHERE id = @printerId
             """, new { printerId }, cancellationToken: ct))
             is { } printer && printer.IsActive
@@ -402,8 +419,11 @@ public sealed class PrintJobService(
         MySqlConnection conn, System.Data.Common.DbTransaction tx, long jobId,
         CartonAllocation allocation, string barcodeValue, CancellationToken ct)
     {
-        var numbers = allocation.Numbers.ToList();
-        foreach (var chunk in numbers.Chunk(1_000))
+        // sequence_no is the 1-based position in allocation order. A running
+        // counter keeps this O(n); a lookup back into the list would be O(n²)
+        // over a 10,000-label job and wrong if a strategy ever repeated a number.
+        var sequence = 0;
+        foreach (var chunk in allocation.Numbers.Chunk(1_000))
         {
             var sb = new StringBuilder(
                 "INSERT INTO print_job_items (requested_at, job_id, sequence_no, carton_no, carton_total, barcode_value, status) VALUES ");
@@ -419,7 +439,7 @@ public sealed class PrintJobService(
                     sb.Append(',');
                 }
                 sb.Append($"(UTC_TIMESTAMP(3), @jobId, @s{i}, @c{i}, @total, @barcode, 'Pending')");
-                parameters.Add($"s{i}", numbers.IndexOf(chunk[i]) + 1);
+                parameters.Add($"s{i}", ++sequence);
                 parameters.Add($"c{i}", chunk[i]);
             }
             await conn.ExecuteAsync(new CommandDefinition(
@@ -435,6 +455,8 @@ public sealed class PrintJobService(
         public string ConnectionType { get; set; } = "";
         public short? Dpi { get; set; }
         public bool IsActive { get; set; }
+        public string? OwnerWorkstation { get; set; }
+        public string Language { get; set; } = "";
     }
     private sealed class PayloadRow
     {

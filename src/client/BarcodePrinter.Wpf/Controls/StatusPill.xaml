@@ -1,0 +1,15 @@
+<UserControl x:Class="BarcodePrinter.Wpf.Controls.StatusPill"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- Status is never colour-only (§12): coloured dot + text on a soft pill. -->
+    <Border x:Name="Bg" CornerRadius="10" Padding="8,3" HorizontalAlignment="Left"
+            Background="{StaticResource Surface.Sunken}">
+        <StackPanel Orientation="Horizontal">
+            <Ellipse x:Name="Dot" Width="6" Height="6" VerticalAlignment="Center"
+                     Fill="{StaticResource Text.Secondary}" />
+            <TextBlock x:Name="Label" Margin="5,0,0,0" VerticalAlignment="Center"
+                       FontFamily="{StaticResource Font.Ui}" FontSize="12" FontWeight="Medium"
+                       Foreground="{StaticResource Text.Primary}" />
+        </StackPanel>
+    </Border>
+</UserControl>

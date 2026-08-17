@@ -1,140 +1,311 @@
 <UserControl x:Class="BarcodePrinter.Wpf.Features.Imports.ImportView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="clr-namespace:BarcodePrinter.Wpf.Controls"
              Background="{StaticResource Surface.Base}">
-    <ScrollViewer VerticalScrollBarVisibility="Auto">
-        <StackPanel Margin="24" MaxWidth="900" HorizontalAlignment="Left">
-
-            <DockPanel LastChildFill="False">
-                <TextBlock DockPanel.Dock="Left" Style="{StaticResource Text.H1}"
-                           Text="Excel Import" VerticalAlignment="Center" />
-                <Button DockPanel.Dock="Right" Height="36" Padding="14,0"
-                        Content="Export products…" Command="{Binding ExportProductsCommand}" />
-                <Button DockPanel.Dock="Right" Height="36" Padding="14,0" Margin="0,0,8,0"
-                        Content="Download template…" Command="{Binding DownloadTemplateCommand}" />
-            </DockPanel>
-
-            <!-- Upload -->
-            <Border Style="{StaticResource Card}" Margin="0,16,0,0">
-                <StackPanel>
-                    <TextBlock Style="{StaticResource Text.Body}" TextWrapping="Wrap"
-                               Text="Upload a filled-in template (.xlsx). The server validates every row, imports in bulk, and reports anything it could not accept. Up to 20,000+ rows per file." />
-                    <StackPanel Orientation="Horizontal" Margin="0,16,0,0">
-                        <Button Style="{StaticResource Button.Primary}" Content="⇪  Choose file and import…"
-                                Command="{Binding UploadCommand}"
-                                IsEnabled="{Binding IsRunning, Converter={StaticResource InverseBool}}" />
-                        <Button Margin="12,0,0,0" Height="40" Padding="16,0" Content="Cancel"
-                                Command="{Binding CancelCurrentCommand}"
-                                Visibility="{Binding IsRunning, Converter={StaticResource BoolToVisibility}}" />
+    <UserControl.Resources>
+        <!-- Counters row shared by the progress and result cards. -->
+        <DataTemplate x:Key="ImportCounters">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="12" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="12" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="12" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="12" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Border Grid.Column="0" Background="{StaticResource Surface.Sunken}" CornerRadius="6" Padding="12,8">
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource Text.Caption}" Text="Rows" />
+                        <TextBlock Style="{StaticResource Text.Mono}" FontSize="18" FontWeight="SemiBold"
+                                   Text="{Binding ProcessedRows, StringFormat=N0}" />
                     </StackPanel>
-                    <TextBlock Margin="0,10,0,0" Style="{StaticResource Text.Caption}"
-                               Foreground="{StaticResource Accent.Info}"
-                               Text="{Binding StatusMessage}" TextWrapping="Wrap"
-                               Visibility="{Binding StatusMessage, Converter={StaticResource NullToCollapsed}}" />
-                </StackPanel>
-            </Border>
-
-            <!-- Progress / result -->
-            <Border Style="{StaticResource Card}" Margin="0,16,0,0"
-                    Visibility="{Binding Current, Converter={StaticResource NullToCollapsed}}">
-                <StackPanel>
-                    <DockPanel LastChildFill="False">
-                        <TextBlock DockPanel.Dock="Left" Style="{StaticResource Text.Body}"
-                                   FontWeight="SemiBold" Text="{Binding Current.FileName}" />
-                        <Border DockPanel.Dock="Right" CornerRadius="10" Padding="10,3">
-                            <Border.Style>
-                                <Style TargetType="Border">
-                                    <Setter Property="Background" Value="{StaticResource Status.Printing}" />
+                </Border>
+                <Border Grid.Column="2" Background="{StaticResource Brush.Success.Soft}" CornerRadius="6" Padding="12,8">
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource Text.Caption}" Text="Valid" />
+                        <TextBlock Style="{StaticResource Text.Mono}" FontSize="18" FontWeight="SemiBold"
+                                   Text="{Binding ValidRows, StringFormat=N0}" />
+                    </StackPanel>
+                </Border>
+                <Border Grid.Column="4" CornerRadius="6" Padding="12,8">
+                    <Border.Style>
+                        <Style TargetType="Border">
+                            <Setter Property="Background" Value="{StaticResource Brush.Danger.Soft}" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding InvalidRows}" Value="0">
+                                    <Setter Property="Background" Value="{StaticResource Surface.Sunken}" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource Text.Caption}" Text="Errors" />
+                        <TextBlock FontSize="18" FontWeight="SemiBold"
+                                   FontFamily="{StaticResource Font.Mono}"
+                                   Text="{Binding InvalidRows, StringFormat=N0}">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Foreground" Value="{StaticResource Accent.Danger}" />
                                     <Style.Triggers>
-                                        <DataTrigger Binding="{Binding Current.Status}" Value="Completed">
-                                            <Setter Property="Background" Value="{StaticResource Status.Completed}" />
-                                        </DataTrigger>
-                                        <DataTrigger Binding="{Binding Current.Status}" Value="Failed">
-                                            <Setter Property="Background" Value="{StaticResource Status.Failed}" />
-                                        </DataTrigger>
-                                        <DataTrigger Binding="{Binding Current.Status}" Value="Cancelled">
-                                            <Setter Property="Background" Value="{StaticResource Text.Secondary}" />
+                                        <DataTrigger Binding="{Binding InvalidRows}" Value="0">
+                                            <Setter Property="Foreground" Value="{StaticResource Text.Primary}" />
                                         </DataTrigger>
                                     </Style.Triggers>
                                 </Style>
-                            </Border.Style>
-                            <TextBlock Text="{Binding Current.Status}" Foreground="White"
-                                       FontSize="12" FontWeight="SemiBold" />
-                        </Border>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </StackPanel>
+                </Border>
+                <Border Grid.Column="6" Background="{StaticResource Brush.Success.Soft}" CornerRadius="6" Padding="12,8">
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource Text.Caption}" Text="Inserted" />
+                        <TextBlock Style="{StaticResource Text.Mono}" FontSize="18" FontWeight="SemiBold"
+                                   Text="{Binding InsertedRows, StringFormat=N0}" />
+                    </StackPanel>
+                </Border>
+                <Border Grid.Column="8" Background="{StaticResource Brush.Info.Soft}" CornerRadius="6" Padding="12,8">
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource Text.Caption}" Text="Updated" />
+                        <TextBlock Style="{StaticResource Text.Mono}" FontSize="18" FontWeight="SemiBold"
+                                   Text="{Binding UpdatedRows, StringFormat=N0}" />
+                    </StackPanel>
+                </Border>
+            </Grid>
+        </DataTemplate>
+    </UserControl.Resources>
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <Grid Margin="{StaticResource Pad.Page}">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <controls:PageHeader Grid.Row="0" Title="Excel Import"
+                                 Description="Bulk load products from a spreadsheet.">
+                <controls:PageHeader.Actions>
+                    <StackPanel Orientation="Horizontal">
+                        <Button Style="{StaticResource Button.Secondary}" Height="36"
+                                Content="Download template…" Command="{Binding DownloadTemplateCommand}" />
+                        <Button Style="{StaticResource Button.Secondary}" Height="36" Margin="8,0,0,0"
+                                Content="Export products…" Command="{Binding ExportProductsCommand}" />
+                    </StackPanel>
+                </controls:PageHeader.Actions>
+            </controls:PageHeader>
+
+            <!-- Step 1 · Upload -->
+            <Border Grid.Row="1" Style="{StaticResource Card}" Margin="{StaticResource Gap.Below.LG}">
+                <StackPanel>
+                    <TextBlock Style="{StaticResource Text.H2}" Text="1 · Upload" />
+                    <TextBlock Style="{StaticResource Text.Caption}" Margin="0,4,0,12" TextWrapping="Wrap"
+                               Text="Upload a filled-in template (.xlsx). The server validates every row, imports in bulk, and reports anything it could not accept. Up to 20,000+ rows per file." />
+                    <Border x:Name="DropZone" AllowDrop="True" Drop="DropZone_Drop"
+                            DragOver="DropZone_DragOver" Background="{StaticResource Surface.Sunken}"
+                            BorderBrush="{StaticResource Border.Default}" BorderThickness="1"
+                            CornerRadius="8" Padding="24">
+                        <StackPanel HorizontalAlignment="Center">
+                            <TextBlock Text="&#xE898;" FontFamily="Segoe MDL2 Assets" FontSize="28"
+                                       HorizontalAlignment="Center"
+                                       Foreground="{StaticResource Text.Secondary}" />
+                            <TextBlock Style="{StaticResource Text.Body}" Margin="0,8,0,0"
+                                       HorizontalAlignment="Center"
+                                       Foreground="{StaticResource Text.Secondary}"
+                                       Text="Drag an .xlsx file here, or" />
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,12,0,0">
+                                <Button Style="{StaticResource Button.Primary}"
+                                        Content="Choose file and import…"
+                                        Command="{Binding UploadCommand}"
+                                        IsEnabled="{Binding ShowProgress, Converter={StaticResource InverseBool}}" />
+                                <Button Style="{StaticResource Button.Secondary}" Margin="12,0,0,0" Height="36"
+                                        Content="Cancel" Command="{Binding CancelCurrentCommand}"
+                                        Visibility="{Binding IsRunning, Converter={StaticResource BoolToVisibility}}" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </Border>
+
+            <!-- Step 2 · Progress -->
+            <Border Grid.Row="2" Style="{StaticResource Card}" Margin="{StaticResource Gap.Below.LG}"
+                    Visibility="{Binding ShowProgress, Converter={StaticResource BoolToVisibility}}">
+                <StackPanel>
+                    <TextBlock Style="{StaticResource Text.H2}" Text="2 · Progress"
+                               Margin="{StaticResource Gap.Below.MD}" />
+
+                    <!-- Uploading: determinate, driven by the streamed bytes. -->
+                    <StackPanel Visibility="{Binding IsUploading, Converter={StaticResource BoolToVisibility}}">
+                        <ProgressBar Height="6" Minimum="0" Maximum="1" Value="{Binding UploadProgress, Mode=OneWay}" />
+                        <TextBlock Style="{StaticResource Text.Caption}" Margin="0,6,0,0"
+                                   Text="{Binding UploadProgress, StringFormat=Uploading… {0:P0}}" />
+                    </StackPanel>
+
+                    <!-- Validating / processing: determinate once the server
+                         knows the row total, indeterminate before that. -->
+                    <StackPanel Visibility="{Binding IsUploading, Converter={StaticResource InverseBoolToVisibility}}">
+                        <DockPanel LastChildFill="False" Margin="{StaticResource Gap.Below.SM}">
+                            <TextBlock DockPanel.Dock="Left" Style="{StaticResource Text.Body}"
+                                       FontWeight="SemiBold" Text="{Binding Current.FileName}" />
+                            <controls:StatusPill DockPanel.Dock="Right" Status="{Binding Current.Status}" />
+                        </DockPanel>
+                        <ProgressBar Height="6"
+                                     Maximum="{Binding Current.TotalRows, Mode=OneWay, FallbackValue=1}"
+                                     Value="{Binding Current.ProcessedRows, Mode=OneWay, FallbackValue=0}">
+                            <ProgressBar.Style>
+                                <Style TargetType="ProgressBar" BasedOn="{StaticResource {x:Type ProgressBar}}">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding Current.TotalRows, FallbackValue=0}" Value="0">
+                                            <Setter Property="IsIndeterminate" Value="True" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </ProgressBar.Style>
+                        </ProgressBar>
+                        <!-- Row count on the left, elapsed time on the right. The
+                             elapsed time is what tells an operator a long import
+                             is still moving rather than wedged. -->
+                        <DockPanel Margin="0,8,0,0" LastChildFill="False">
+                            <TextBlock DockPanel.Dock="Left" Style="{StaticResource Text.Caption}"
+                                       FontFamily="{StaticResource Font.Mono}"
+                                       Text="{Binding RowProgressText}"
+                                       Visibility="{Binding RowProgressText, Converter={StaticResource NullToCollapsed}}" />
+                            <TextBlock DockPanel.Dock="Right" Style="{StaticResource Text.Caption}"
+                                       Text="{Binding DurationText}"
+                                       Visibility="{Binding DurationText, Converter={StaticResource NullToCollapsed}}" />
+                        </DockPanel>
+                        <!-- Margin lives here, not on the caption above: the
+                             caption collapses while the row total is unknown, and
+                             a collapsed element contributes no spacing, which is
+                             how the bar ended up touching the counters. -->
+                        <ContentControl Content="{Binding Current}" Margin="0,20,0,0"
+                                        ContentTemplate="{StaticResource ImportCounters}"
+                                        Visibility="{Binding Current, Converter={StaticResource NullToCollapsed}}" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- Step 3 · Result -->
+            <Border Grid.Row="3" Style="{StaticResource Card}" Margin="{StaticResource Gap.Below.LG}"
+                    Visibility="{Binding ShowResult, Converter={StaticResource BoolToVisibility}}">
+                <StackPanel>
+                    <TextBlock Style="{StaticResource Text.H2}" Text="3 · Result"
+                               Margin="{StaticResource Gap.Below.MD}" />
+                    <DockPanel LastChildFill="False" Margin="{StaticResource Gap.Below.MD}">
+                        <TextBlock DockPanel.Dock="Left" Style="{StaticResource Text.Body}"
+                                   FontWeight="SemiBold" Text="{Binding Current.FileName}" />
+                        <controls:StatusPill DockPanel.Dock="Right" Status="{Binding Current.Status}" />
+                        <TextBlock DockPanel.Dock="Right" Style="{StaticResource Text.Caption}"
+                                   VerticalAlignment="Center" Margin="0,0,12,0"
+                                   Text="{Binding DurationText}"
+                                   Visibility="{Binding DurationText, Converter={StaticResource NullToCollapsed}}" />
                     </DockPanel>
 
-                    <ProgressBar Height="6" Margin="0,12,0,0" BorderThickness="0"
-                                 Foreground="{StaticResource Brand.Primary}"
-                                 Background="{StaticResource Surface.Sunken}"
-                                 IsIndeterminate="{Binding IsRunning}" />
+                    <ContentControl Content="{Binding Current}"
+                                    ContentTemplate="{StaticResource ImportCounters}" />
 
-                    <UniformGrid Columns="5" Margin="0,16,0,0">
+                    <!-- Failure reason -->
+                    <Border Background="{StaticResource Brush.Danger.Soft}" CornerRadius="6"
+                            Padding="12,10" Margin="0,12,0,0"
+                            Visibility="{Binding CurrentFailed, Converter={StaticResource BoolToVisibility}}">
                         <StackPanel>
-                            <TextBlock Style="{StaticResource Text.Caption}" Text="Rows" />
-                            <TextBlock Style="{StaticResource Text.H1}"
-                                       Text="{Binding Current.ProcessedRows, StringFormat=N0}" />
-                        </StackPanel>
-                        <StackPanel>
-                            <TextBlock Style="{StaticResource Text.Caption}" Text="Valid" />
-                            <TextBlock Style="{StaticResource Text.H1}"
-                                       Text="{Binding Current.ValidRows, StringFormat=N0}" />
-                        </StackPanel>
-                        <StackPanel>
-                            <TextBlock Style="{StaticResource Text.Caption}" Text="Errors" />
-                            <TextBlock Style="{StaticResource Text.H1}"
+                            <TextBlock Style="{StaticResource Text.Body}" FontWeight="SemiBold"
+                                       Foreground="{StaticResource Accent.Danger}" Text="Import failed" />
+                            <TextBlock Style="{StaticResource Text.Caption}" Margin="0,2,0,0" TextWrapping="Wrap"
                                        Foreground="{StaticResource Accent.Danger}"
-                                       Text="{Binding Current.InvalidRows, StringFormat=N0}" />
+                                       Text="{Binding Current.ErrorMessage}"
+                                       Visibility="{Binding Current.ErrorMessage, Converter={StaticResource NullToCollapsed}}" />
                         </StackPanel>
-                        <StackPanel>
-                            <TextBlock Style="{StaticResource Text.Caption}" Text="Inserted" />
-                            <TextBlock Style="{StaticResource Text.H1}"
-                                       Foreground="{StaticResource Accent.Success}"
-                                       Text="{Binding Current.InsertedRows, StringFormat=N0}" />
-                        </StackPanel>
-                        <StackPanel>
-                            <TextBlock Style="{StaticResource Text.Caption}" Text="Updated" />
-                            <TextBlock Style="{StaticResource Text.H1}"
-                                       Foreground="{StaticResource Accent.Info}"
-                                       Text="{Binding Current.UpdatedRows, StringFormat=N0}" />
-                        </StackPanel>
-                    </UniformGrid>
+                    </Border>
 
-                    <TextBlock Margin="0,12,0,0" Style="{StaticResource Text.Body}"
-                               Foreground="{StaticResource Accent.Danger}" TextWrapping="Wrap"
-                               Text="{Binding Current.ErrorMessage}"
-                               Visibility="{Binding Current.ErrorMessage, Converter={StaticResource NullToCollapsed}}" />
-
-                    <Button Margin="0,12,0,0" Height="36" Padding="14,0" HorizontalAlignment="Left"
+                    <Button Margin="0,12,0,0" Style="{StaticResource Button.Secondary}" Height="36"
+                            HorizontalAlignment="Left"
                             Content="Download error report…" Command="{Binding DownloadErrorsCommand}"
                             Visibility="{Binding CurrentHasErrors, Converter={StaticResource BoolToVisibility}}" />
                 </StackPanel>
             </Border>
 
-            <!-- Recent -->
-            <TextBlock Style="{StaticResource Text.Label}" Margin="0,24,0,8" Text="RECENT IMPORTS" />
-            <ItemsControl ItemsSource="{Binding Recent}">
-                <ItemsControl.ItemTemplate>
-                    <DataTemplate>
-                        <Border Background="{StaticResource Surface.Card}"
-                                BorderBrush="{StaticResource Border.Default}" BorderThickness="1"
-                                CornerRadius="6" Padding="12,8" Margin="0,0,0,6">
-                            <DockPanel LastChildFill="False">
-                                <TextBlock DockPanel.Dock="Left" Style="{StaticResource Text.Body}">
-                                    <Run Text="{Binding FileName, Mode=OneWay}" FontWeight="SemiBold" />
-                                    <Run Text="{Binding UploadedAtUtc, Mode=OneWay, StringFormat=· {0:dd/MM/yyyy HH:mm}}"
-                                         Foreground="{StaticResource Text.Secondary}" />
-                                </TextBlock>
-                                <TextBlock DockPanel.Dock="Right" Style="{StaticResource Text.Caption}"
-                                           VerticalAlignment="Center">
-                                    <Run Text="{Binding Status, Mode=OneWay}" FontWeight="SemiBold" />
-                                    <Run Text="{Binding TotalRows, Mode=OneWay, StringFormat=· {0:N0} rows}" />
-                                    <Run Text="{Binding InvalidRows, Mode=OneWay, StringFormat=· {0:N0} errors}" />
-                                </TextBlock>
-                            </DockPanel>
-                        </Border>
-                    </DataTemplate>
-                </ItemsControl.ItemTemplate>
-            </ItemsControl>
-        </StackPanel>
+            <!-- Recent imports -->
+            <Border Grid.Row="4" Style="{StaticResource Card}">
+                <StackPanel Grid.IsSharedSizeScope="True">
+                    <TextBlock Style="{StaticResource Text.Label}" Text="RECENT IMPORTS"
+                               Margin="{StaticResource Gap.Below.SM}" />
+                    <Grid Margin="12,0,12,6"
+                          Visibility="{Binding Recent.Count, Converter={StaticResource CountToVisibility}}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" SharedSizeGroup="ImpWhen" />
+                            <ColumnDefinition Width="Auto" SharedSizeGroup="ImpRows" />
+                            <ColumnDefinition Width="Auto" SharedSizeGroup="ImpErrors" />
+                            <ColumnDefinition Width="Auto" SharedSizeGroup="ImpStatus" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Style="{StaticResource Text.Caption}" FontWeight="SemiBold"
+                                   Text="File" Margin="0,0,16,0" />
+                        <TextBlock Grid.Column="1" Style="{StaticResource Text.Caption}" FontWeight="SemiBold"
+                                   Text="Uploaded" Margin="0,0,16,0" />
+                        <TextBlock Grid.Column="2" Style="{StaticResource Text.Caption}" FontWeight="SemiBold"
+                                   Text="Rows" Margin="0,0,16,0" HorizontalAlignment="Right" />
+                        <TextBlock Grid.Column="3" Style="{StaticResource Text.Caption}" FontWeight="SemiBold"
+                                   Text="Errors" Margin="0,0,16,0" HorizontalAlignment="Right" />
+                        <TextBlock Grid.Column="4" Style="{StaticResource Text.Caption}" FontWeight="SemiBold"
+                                   Text="Status" />
+                    </Grid>
+                    <ItemsControl ItemsSource="{Binding Recent}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Background="{StaticResource Surface.Sunken}" CornerRadius="6"
+                                        Padding="12,8" Margin="{StaticResource Gap.Below.SM}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" SharedSizeGroup="ImpWhen" />
+                                            <ColumnDefinition Width="Auto" SharedSizeGroup="ImpRows" />
+                                            <ColumnDefinition Width="Auto" SharedSizeGroup="ImpErrors" />
+                                            <ColumnDefinition Width="Auto" SharedSizeGroup="ImpStatus" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Style="{StaticResource Text.Body}"
+                                                   FontWeight="SemiBold" VerticalAlignment="Center"
+                                                   TextTrimming="CharacterEllipsis" Margin="0,0,16,0"
+                                                   Text="{Binding FileName}" />
+                                        <TextBlock Grid.Column="1" Style="{StaticResource Text.Caption}"
+                                                   VerticalAlignment="Center" Margin="0,0,16,0"
+                                                   Text="{Binding UploadedAtUtc, StringFormat=dd/MM/yyyy HH:mm}" />
+                                        <TextBlock Grid.Column="2" Style="{StaticResource Text.Mono}" FontSize="12"
+                                                   VerticalAlignment="Center" Margin="0,0,16,0"
+                                                   HorizontalAlignment="Right"
+                                                   Text="{Binding TotalRows, StringFormat=N0}" />
+                                        <TextBlock Grid.Column="3" FontFamily="{StaticResource Font.Mono}"
+                                                   FontSize="12" VerticalAlignment="Center" Margin="0,0,16,0"
+                                                   HorizontalAlignment="Right"
+                                                   Text="{Binding InvalidRows, StringFormat=N0}">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Foreground" Value="{StaticResource Accent.Danger}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding InvalidRows}" Value="0">
+                                                            <Setter Property="Foreground" Value="{StaticResource Text.Secondary}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                        <controls:StatusPill Grid.Column="4" Status="{Binding Status}"
+                                                             HorizontalAlignment="Left" VerticalAlignment="Center" />
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Style="{StaticResource Text.Caption}" Text="No imports yet — upload a file to get started."
+                               Visibility="{Binding Recent.Count, Converter={StaticResource ZeroToVisibility}}" />
+                </StackPanel>
+            </Border>
+        </Grid>
     </ScrollViewer>
 </UserControl>

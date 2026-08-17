@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Installs the Barcode Printer API as a Windows Service, applies the database
     schema, and opens exactly one firewall port.
@@ -31,7 +31,17 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$InstallRoot   = "D:\BarcodePrinter",
+    # Data root: configuration, logs, images, imports, the key ring, backups.
+    # ProgramData rather than a hard-coded D:\ — a customer workstation is not
+    # guaranteed to have a second volume.
+    [string]$InstallRoot   = "$env:ProgramData\BarcodePrinter",
+
+    # Where the API binaries live. Left empty, this script copies api\ from the
+    # package into $InstallRoot\api and owns them. The MSI passes its own
+    # install directory instead, because an installer that lets a script copy
+    # files behind its back cannot repair, patch or cleanly uninstall them.
+    [string]$ApiBinPath,
+
     [string]$ServiceName   = "BarcodePrinter.Api",
     [string]$ServiceAccount = "BarcodePrinterSvc",
     [Parameter(Mandatory)]
@@ -56,10 +66,48 @@ param(
     # when MySQL is local; pass "" to install no dependency.
     [string]$MySqlServiceName,
 
-    [switch]$SkipPreflight
+    [switch]$SkipPreflight,
+
+    # Supplied by the installer entry point. Kept optional so direct server
+    # deployments remain supported, with their diagnostics beside ProgramData.
+    [string]$DiagnosticLogPath
 )
 
 $ErrorActionPreference = "Stop"
+
+if (-not $DiagnosticLogPath) {
+    $diagnosticDir = Join-Path $InstallRoot "logs"
+    New-Item -ItemType Directory -Path $diagnosticDir -Force | Out-Null
+    $DiagnosticLogPath = Join-Path $diagnosticDir ("server-install-{0:yyyyMMdd-HHmmss}.log" -f (Get-Date))
+}
+$script:serverPhase = "startup"
+$script:firstFailureRecorded = $false
+function Write-Diagnostic([string]$Message) {
+    Add-Content -LiteralPath $DiagnosticLogPath -Value ("[{0:yyyy-MM-dd HH:mm:ss.fff}] {1}" -f (Get-Date), $Message)
+}
+function Enter-ServerPhase([string]$Name) {
+    $script:serverPhase = $Name
+    Write-Diagnostic "PHASE: $Name"
+}
+function Write-ServerFailure([System.Management.Automation.ErrorRecord]$ErrorRecord) {
+    if ($script:firstFailureRecorded) { return }
+    $script:firstFailureRecorded = $true
+    # Do not record command arguments or exception data: connection strings and
+    # generated passwords must never reach a durable diagnostic log.
+    Write-Diagnostic "FIRST FAILURE: phase=$script:serverPhase"
+    Write-Diagnostic ("  type       : {0}" -f $ErrorRecord.Exception.GetType().FullName)
+    Write-Diagnostic ("  message    : {0}" -f $ErrorRecord.Exception.Message)
+    Write-Diagnostic ("  category   : {0}" -f $ErrorRecord.CategoryInfo)
+    if ($ErrorRecord.FullyQualifiedErrorId) { Write-Diagnostic ("  error id   : {0}" -f $ErrorRecord.FullyQualifiedErrorId) }
+    if ($ErrorRecord.InvocationInfo -and $ErrorRecord.InvocationInfo.PositionMessage) {
+        Write-Diagnostic ("  location   : {0}" -f ($ErrorRecord.InvocationInfo.PositionMessage -replace "`r?`n", " | "))
+    }
+    if ($ErrorRecord.ScriptStackTrace) {
+        Write-Diagnostic ("  stack      : {0}" -f ($ErrorRecord.ScriptStackTrace -replace "`r?`n", " | "))
+    }
+    if ($LASTEXITCODE -ne $null) { Write-Diagnostic "  native exit: $LASTEXITCODE" }
+}
+trap { Write-ServerFailure $_; throw $_ }
 
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
         ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
@@ -67,8 +115,16 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
 }
 
 $source = $PSScriptRoot
-if (-not (Test-Path (Join-Path $source "api\BarcodePrinter.Api.exe"))) {
+$managedBinaries = -not $ApiBinPath      # true when this script owns the api\ copy
+
+if (-not (Test-Path (Join-Path $source "migrator\BarcodePrinter.DbMigrator.exe"))) {
+    throw "migrator\BarcodePrinter.DbMigrator.exe not found. Run this from the folder Publish.ps1 produced."
+}
+if ($managedBinaries -and -not (Test-Path (Join-Path $source "api\BarcodePrinter.Api.exe"))) {
     throw "api\BarcodePrinter.Api.exe not found. Run this from the folder Publish.ps1 produced."
+}
+if (-not $managedBinaries -and -not (Test-Path (Join-Path $ApiBinPath "BarcodePrinter.Api.exe"))) {
+    throw "BarcodePrinter.Api.exe not found in -ApiBinPath '$ApiBinPath'."
 }
 
 function ConvertFrom-SecureStringPlain([securestring]$Value) {
@@ -100,18 +156,34 @@ $connectionString = "Server=$MySqlHost;Port=$MySqlPort;Database=$MySqlDatabase;"
 # ngram_token_size produces a product search that silently matches nothing.
 
 if (-not $SkipPreflight) {
+    Enter-ServerPhase "MySQL preflight"
     Write-Host "Checking the MySQL server..." -ForegroundColor Cyan
-    & (Join-Path $source "migrator\BarcodePrinter.DbMigrator.exe") $connectionString --preflight-only
-    if ($LASTEXITCODE -ne 0) {
+    # Same reason as the migration step below: the preflight reports its
+    # findings on STDERR, and under $ErrorActionPreference = 'Stop' that would
+    # terminate the script before its exit code — the verdict — is read.
+    $previousPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & (Join-Path $source "migrator\BarcodePrinter.DbMigrator.exe") $connectionString --preflight-only 2>&1 |
+            ForEach-Object { Write-Host "  $_" }
+        $preflightExit = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousPreference
+    }
+    if ($preflightExit -ne 0) {
         throw "MySQL preflight failed (see above). Nothing has been installed."
     }
 }
 
 # ---- 1. Folder layout (§16) --------------------------------------------------------
+Enter-ServerPhase "Folder layout"
 
 Write-Host "Creating $InstallRoot..." -ForegroundColor Cyan
 $folders = @{
-    api     = Join-Path $InstallRoot "api"
+    # When the MSI owns the binaries, api\ points at ITS directory and nothing
+    # is copied there — but appsettings.Production.json still lives beside the
+    # exe, because that is where the host looks for it.
+    api     = if ($managedBinaries) { Join-Path $InstallRoot "api" } else { $ApiBinPath }
     images  = Join-Path $InstallRoot "images"
     imports = Join-Path $InstallRoot "imports"
     logs    = Join-Path $InstallRoot "logs"
@@ -123,6 +195,7 @@ foreach ($folder in $folders.Values) {
 }
 
 # ---- 2. Service account ------------------------------------------------------------
+Enter-ServerPhase "Service account"
 
 $account = Get-LocalUser -Name $ServiceAccount -ErrorAction SilentlyContinue
 if (-not $account) {
@@ -134,7 +207,11 @@ if (-not $account) {
         -Description "Barcode Printer API service. Not interactive." `
         -PasswordNeverExpires -UserMayNotChangePassword
 } else {
-    Write-Host "Service account $ServiceAccount already exists." -ForegroundColor DarkGray
+    # Repair and upgrade must retain both the account credential and its DPAPI
+    # user profile. Rotating the password here can strand old user-scoped Data
+    # Protection keys; the service registration below therefore also retains
+    # its existing logon credential.
+    Write-Host "Service account $ServiceAccount already exists — preserving its credential." -ForegroundColor DarkGray
 }
 
 # ACL rules are built from the SID, not the name. ".\Account" is a PowerShell
@@ -181,6 +258,7 @@ if ($logonLine -and $logonLine -match [regex]::Escape($accountSidText)) {
 Remove-Item $rightsDir -Recurse -Force -ErrorAction SilentlyContinue
 
 # ---- 3. Stop the running service before overwriting its files ----------------------
+Enter-ServerPhase "Stopping existing API service"
 
 $existing = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
 if ($existing -and $existing.Status -ne "Stopped") {
@@ -190,6 +268,7 @@ if ($existing -and $existing.Status -ne "Stopped") {
 }
 
 # ---- 4. Certificate ----------------------------------------------------------------
+Enter-ServerPhase "Certificate provisioning"
 #
 # Kestrel resolves its certificate from CONFIGURATION, not from an HTTP.SYS
 # binding: `netsh http add sslcert` binds a certificate for http.sys, which
@@ -306,9 +385,14 @@ $publicCertPath = Join-Path $InstallRoot "barcodeprinter-lan.cer"
 Export-Certificate -Cert $certificate -FilePath $publicCertPath -Force | Out-Null
 
 # ---- 5. Files ----------------------------------------------------------------------
+Enter-ServerPhase "Application configuration"
 
-Write-Host "Copying application files..." -ForegroundColor Cyan
-Copy-Item (Join-Path $source "api\*") $folders.api -Recurse -Force
+if ($managedBinaries) {
+    Write-Host "Copying application files..." -ForegroundColor Cyan
+    Copy-Item (Join-Path $source "api\*") $folders.api -Recurse -Force
+} else {
+    Write-Host "Using the installer-managed binaries at $($folders.api)." -ForegroundColor DarkGray
+}
 
 # AllowInvalid governs how Kestrel LOADS this certificate out of the machine
 # store — it does not weaken anything for the clients, which still validate the
@@ -327,6 +411,11 @@ $kestrelSection = @{
         }
     }
 }
+$dataProtectionSection = @{
+    KeyRingPath            = $folders.keys
+    ApplicationName         = "BarcodePrinter.Api"
+    ProtectToLocalMachine   = $true
+}
 
 $settingsPath = Join-Path $folders.api "appsettings.Production.json"
 if (Test-Path $settingsPath) {
@@ -335,8 +424,14 @@ if (Test-Path $settingsPath) {
     # regardless: installs made before the certificate fix carry an Https
     # endpoint with no certificate, which cannot start.
     Write-Host "Keeping the existing appsettings.Production.json (refreshing the HTTPS binding)." -ForegroundColor DarkGray
-    $settings = Get-Content $settingsPath -Raw | ConvertFrom-Json -AsHashtable
-    $settings.Kestrel = $kestrelSection
+    # No -AsHashtable: that parameter is PowerShell 6+, and this script runs
+    # under Windows PowerShell 5.1 when the installer invokes it — where it is
+    # a runtime binding error that only surfaces on the UPGRADE path, never in
+    # fresh-install testing. Add-Member -Force replaces the property on the
+    # PSCustomObject that 5.1's ConvertFrom-Json produces.
+    $settings = Get-Content $settingsPath -Raw | ConvertFrom-Json
+    $settings | Add-Member -NotePropertyName Kestrel -NotePropertyValue $kestrelSection -Force
+    $settings | Add-Member -NotePropertyName DataProtection -NotePropertyValue $dataProtectionSection -Force
     $settings | ConvertTo-Json -Depth 8 | Set-Content $settingsPath -Encoding UTF8
 } else {
     # A fresh 512-bit signing key per installation. Reusing a key across sites would
@@ -353,7 +448,9 @@ if (Test-Path $settingsPath) {
             SigningKey         = $signingKey
             AccessTokenMinutes = 15
         }
-        DataProtection = @{ KeyRingPath = $folders.keys }
+        DataProtection = $dataProtectionSection
+        Images = @{ RootPath = $folders.images }
+        Imports = @{ RootPath = $folders.imports }
         Storage = @{
             ImagePath  = $folders.images
             ImportPath = $folders.imports
@@ -379,31 +476,36 @@ if (Test-Path $settingsPath) {
 }
 
 # ---- 6. ACLs — secrets are readable by the service account and admins only ---------
+Enter-ServerPhase "Application ACLs"
 
 Write-Host "Restricting access to configuration and keys..." -ForegroundColor Cyan
 foreach ($path in @($settingsPath, $folders.keys)) {
     $acl = Get-Acl $path
     $acl.SetAccessRuleProtection($true, $false)   # stop inheriting Users
     @($acl.Access) | ForEach-Object { [void]$acl.RemoveAccessRule($_) }
-    $identities = @(
-        [System.Security.Principal.NTAccount]::new("BUILTIN\Administrators")
-        [System.Security.Principal.NTAccount]::new("NT AUTHORITY\SYSTEM")
-        $accountSid
-    )
     # Inheritance flags describe what a rule passes to CHILDREN, so they are only
     # valid on a directory. appsettings.Production.json is a file: the same rule
     # that works on keys\ throws "No flags can be set" on it.
     $isContainer = Test-Path $path -PathType Container
-    foreach ($identity in $identities) {
+    foreach ($identity in @(
+        [System.Security.Principal.NTAccount]::new("BUILTIN\Administrators")
+        [System.Security.Principal.NTAccount]::new("NT AUTHORITY\SYSTEM"))) {
         $rule = if ($isContainer) {
             New-Object System.Security.AccessControl.FileSystemAccessRule(
                 $identity, "FullControl", "ContainerInherit,ObjectInherit", "None", "Allow")
         } else {
-            New-Object System.Security.AccessControl.FileSystemAccessRule(
-                $identity, "FullControl", "Allow")
+            New-Object System.Security.AccessControl.FileSystemAccessRule($identity, "FullControl", "Allow")
         }
         $acl.AddAccessRule($rule)
     }
+    $serviceRights = if ($path -eq $folders.keys) { "Modify" } else { "ReadAndExecute" }
+    $serviceRule = if ($isContainer) {
+        New-Object System.Security.AccessControl.FileSystemAccessRule(
+            $accountSid, $serviceRights, "ContainerInherit,ObjectInherit", "None", "Allow")
+    } else {
+        New-Object System.Security.AccessControl.FileSystemAccessRule($accountSid, $serviceRights, "Allow")
+    }
+    $acl.AddAccessRule($serviceRule)
     Set-Acl $path $acl
 }
 
@@ -415,27 +517,40 @@ foreach ($writable in @($folders.images, $folders.imports, $folders.logs, $folde
 }
 
 # ---- 7. Schema — an explicit, logged deployment step (§16) -------------------------
+Enter-ServerPhase "Database migrations"
 
 Write-Host "Applying database migrations..." -ForegroundColor Cyan
 $migrationLog = Join-Path $folders.logs ("migration-{0:yyyyMMdd-HHmmss}.log" -f (Get-Date))
-& (Join-Path $source "migrator\BarcodePrinter.DbMigrator.exe") $connectionString 2>&1 |
-    Tee-Object -FilePath $migrationLog
-if ($LASTEXITCODE -ne 0) {
-    throw "Migration failed. The service was NOT started. See $migrationLog"
+
+# $ErrorActionPreference is Stop for this script, and under Stop a native
+# program's STDERR arriving through `2>&1` becomes a TERMINATING error — the
+# first diagnostic line the migrator writes would abort the install before its
+# exit code is ever examined. The exit code is the verdict; the text is a log.
+$previousPreference = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+try {
+    & (Join-Path $source "migrator\BarcodePrinter.DbMigrator.exe") $connectionString 2>&1 |
+        Tee-Object -FilePath $migrationLog
+    $migrationExit = $LASTEXITCODE
+} finally {
+    $ErrorActionPreference = $previousPreference
+}
+if ($migrationExit -ne 0) {
+    throw "Migration failed (exit $migrationExit). The service was NOT started. See $migrationLog"
 }
 
 # ---- 8. Service --------------------------------------------------------------------
+Enter-ServerPhase "API service registration"
 
-$credential = New-Object System.Management.Automation.PSCredential(
-    ".\$ServiceAccount", $ServiceAccountPassword)
 $exe = Join-Path $folders.api "BarcodePrinter.Api.exe"
 
 if ($existing) {
-    Write-Host "Updating the $ServiceName service..." -ForegroundColor Cyan
-    & sc.exe config $ServiceName binPath= "`"$exe`"" obj= ".\$ServiceAccount" `
-        password= (ConvertFrom-SecureStringPlain $ServiceAccountPassword) | Out-Null
+    Write-Host "Updating the $ServiceName service binary path while preserving its logon credential..." -ForegroundColor Cyan
+    & sc.exe config $ServiceName binPath= "`"$exe`"" | Out-Null
 } else {
     Write-Host "Registering the $ServiceName service..." -ForegroundColor Cyan
+    $credential = New-Object System.Management.Automation.PSCredential(
+        ".\$ServiceAccount", $ServiceAccountPassword)
     New-Service -Name $ServiceName -BinaryPathName "`"$exe`"" `
         -DisplayName "Barcode Label Printing API" `
         -Description "Serves the Barcode Label Printing desktop clients and dispatches network print jobs." `
@@ -470,6 +585,7 @@ if ($MySqlServiceName) {
 [Environment]::SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", "Production", "Machine")
 
 # ---- 9. Firewall — the API port, and nothing else ----------------------------------
+Enter-ServerPhase "Firewall configuration"
 
 Write-Host "Configuring the firewall..." -ForegroundColor Cyan
 Get-NetFirewallRule -DisplayName "Barcode Printer API" -ErrorAction SilentlyContinue |
@@ -489,33 +605,119 @@ if ($mysqlExposed) {
 }
 
 # ---- 10. Start and verify ----------------------------------------------------------
+Enter-ServerPhase "API startup and health validation"
 
 Write-Host "Starting $ServiceName..." -ForegroundColor Cyan
-Start-Service -Name $ServiceName
+
+# Retried, because the service control manager can transiently refuse a start
+# right after an upgrade or repair has touched the binaries — the Restart
+# Manager session or a pending control from the stop above has not fully
+# released the service yet. One refusal is not a broken installation; a refusal
+# that survives half a minute of retries is, and gets reported with the state
+# the SCM is actually in rather than a bare "cannot start".
+$started = $false
+foreach ($attempt in 1..6) {
+    try {
+        Start-Service -Name $ServiceName -ErrorAction Stop
+        $started = $true
+        break
+    } catch {
+        if ($attempt -eq 6) {
+            $state = (& sc.exe query $ServiceName | Out-String).Trim()
+            throw "Could not start $ServiceName after $attempt attempts: $($_.Exception.Message)`nService state:`n$state"
+        }
+        Write-Host "  start refused (attempt $attempt), retrying..." -ForegroundColor Yellow
+        Start-Sleep -Seconds 5
+    }
+}
 (Get-Service $ServiceName).WaitForStatus("Running", "00:01:00")
 
-$healthy = $false
-foreach ($attempt in 1..30) {
+# The probe must accept the just-generated certificate before anything has
+# trusted it, and it must do so on BOTH shells this script runs under.
+# Invoke-WebRequest -SkipCertificateCheck exists only in PowerShell 7; under
+# Windows PowerShell 5.1 — which is what the installer's custom action host
+# runs — that parameter is a binding error, the catch below swallows it, and a
+# perfectly healthy service "fails" its health check thirty times in a row.
+# HttpWebRequest with a per-request validation callback works identically on
+# both, without touching the process-wide ServicePointManager callback.
+function Test-HealthEndpoint([string]$Url) {
+    $request = [System.Net.HttpWebRequest]::Create($Url)
+    $request.Timeout = 5000
+    $request.ServerCertificateValidationCallback = { $true }
     try {
-        $response = Invoke-WebRequest "https://localhost:$HttpsPort/health" `
-            -SkipCertificateCheck -TimeoutSec 5
-        if ($response.StatusCode -eq 200) { $healthy = $true; break }
+        $response = $request.GetResponse()
+        try {
+            $status = [int]$response.StatusCode
+            Write-Diagnostic "health attempt: endpoint=$Url status=$status"
+            return ($status -eq 200)
+        } finally { $response.Close() }
     } catch {
-        Start-Sleep -Seconds 2
+        $status = if ($_.Exception.Response) { [int]$_.Exception.Response.StatusCode } else { "none" }
+        Write-Diagnostic ("health attempt: endpoint={0} status={1} exception={2}: {3}" -f $Url, $status, $_.Exception.GetType().FullName, $_.Exception.Message)
+        return $false
     }
 }
 
+$healthy = $false
+$lastHealthException = ""
+$startTime = Get-Date
+
+foreach ($attempt in 1..30) {
+    $request = [System.Net.HttpWebRequest]::Create("https://localhost:$HttpsPort/health")
+    $request.Timeout = 5000
+    $request.ServerCertificateValidationCallback = { $true }
+    try {
+        $response = $request.GetResponse()
+        try {
+            if ([int]$response.StatusCode -eq 200) {
+                $healthy = $true
+                break
+            }
+        } finally { $response.Close() }
+    } catch {
+        $lastHealthException = "$($_.Exception.GetType().FullName): $($_.Exception.Message)"
+        Write-Diagnostic ("health attempt {0}: endpoint=https://localhost:{1}/health exception={2}" -f $attempt, $HttpsPort, $lastHealthException)
+    }
+    Start-Sleep -Seconds 2
+}
+
 if (-not $healthy) {
-    # "Running" only means the process launched. Surface the reason instead of a
-    # bare timeout: a certificate or connection-string fault is in the log.
+    $elapsed = (Get-Date) - $startTime
+    $svcQuery = (& sc.exe query $ServiceName | Out-String).Trim()
+    $apiProcess = Get-Process -Name "BarcodePrinter.Api" -ErrorAction SilentlyContinue
+    $procInfo = if ($apiProcess) { "PID: $($apiProcess.Id), WorkingSet: $($apiProcess.WorkingSet64)" } else { "Process NOT found" }
+    $connections = Get-NetTCPConnection -LocalPort $HttpsPort -ErrorAction SilentlyContinue | Out-String
+    
     $lastLog = Get-ChildItem $folders.logs -Filter "api-*.log" -ErrorAction SilentlyContinue |
         Sort-Object LastWriteTime -Descending | Select-Object -First 1
-    if ($lastLog) {
-        Write-Host "--- last 20 log lines -------------------------------" -ForegroundColor Yellow
-        Get-Content $lastLog.FullName -Tail 20 | Write-Host
-        Write-Host "-----------------------------------------------------" -ForegroundColor Yellow
-    }
-    throw "The service started but /health did not report healthy. See $($folders.logs)."
+    $logTail = if ($lastLog) { Get-Content $lastLog.FullName -Tail 30 -ErrorAction SilentlyContinue | Out-String } else { "No API log found" }
+    
+    $diagReport = @"
+=== HEALTH CHECK FAILURE DIAGNOSTICS ===
+Timestamp: $(Get-Date -Format 'o')
+Elapsed Probe Time: $($elapsed.TotalSeconds)s
+Target Endpoint: https://localhost:$HttpsPort/health
+Last Probe Exception: $lastHealthException
+
+Service Query Output:
+$svcQuery
+
+Process Info:
+$procInfo
+
+Net TCP Connections (Port $HttpsPort):
+$connections
+
+Last API Log ($($lastLog?.FullName)):
+$logTail
+========================================
+"@
+    $diagPath = Join-Path $folders.logs "health-check-failure.log"
+    Set-Content -Path $diagPath -Value $diagReport -Encoding UTF8 -Force
+    Write-Host $diagReport -ForegroundColor Red
+
+    $tailSummary = if ($lastLog) { (Get-Content $lastLog.FullName -Tail 5 -ErrorAction SilentlyContinue) -join "`n" } else { "No log" }
+    throw "The service started but https://localhost:$HttpsPort/health did not report healthy after $($elapsed.TotalSeconds)s.`nLast exception: $lastHealthException`nLast log tail:`n$tailSummary`nSee detailed diagnostics at $diagPath"
 }
 
 Write-Host ""

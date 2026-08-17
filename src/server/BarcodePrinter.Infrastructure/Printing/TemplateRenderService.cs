@@ -134,38 +134,69 @@ public sealed class TemplateRenderService(
         var feedbackUrl = await settings.GetAsync("Label:FeedbackFormUrl", ct);
         var companyName = await settings.GetAsync("Company:Name", ct);
 
+        // Associate each mapping row with its bindable element via the
+        // detected-field index recorded at registration (SampleValue) — the
+        // same key Prepare uses on the ZPL path. A positional zip against
+        // sort_order would silently bind values to the wrong elements the
+        // moment display order diverges from declaration order.
+        var placeholderByElementId = MapPlaceholdersToElements(template.Fields, bindable);
+
         var now = DateTime.Now;
         var copies = copiesPerLabel < 1 ? 1 : (int)copiesPerLabel;
         var pages = new List<byte[]>((int)allocation.Total * copies);
 
-        foreach (var carton in allocation.Numbers)
+        // The product image is identical on every label: decode it once per
+        // job, not once per label (a 500-carton run previously performed 500
+        // file reads + decodes inside the submit transaction).
+        var bitmaps = new Dictionary<string, SkiaSharp.SKBitmap?>(StringComparer.OrdinalIgnoreCase);
+        SkiaSharp.SKBitmap? LoadCached(string hash)
         {
-            var context = new PrintContext(
-                new ProductValues(product.Code, product.Description, product.BarcodeValue,
-                    product.Uom, product.Size, product.Color, product.ImageHash),
-                new EffectiveValues(batch, productionDate, expiryDate, quantityText),
-                new CartonValues(carton, allocation.Total, allocation.From, allocation.To,
-                    strategy.Format(carton, allocation)),
-                new JobValues(jobNo, username, printerName, false),
-                new SettingsValues(feedbackUrl, companyName, dateFormat, timestampFormat),
-                now);
-
-            var bound = binder.Bind(mappings, context);
-            var byElement = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            for (var i = 0; i < bindable.Count && i < mappings.Count; i++)
+            if (!bitmaps.TryGetValue(hash, out var bitmap))
             {
-                if (bound.TryGetValue(mappings[i].PlaceholderRef, out var value))
+                bitmap = LoadBitmap(hash, ct);
+                bitmaps[hash] = bitmap;
+            }
+            return bitmap;
+        }
+
+        try
+        {
+            foreach (var carton in allocation.Numbers)
+            {
+                var context = new PrintContext(
+                    new ProductValues(product.Code, product.Description, product.BarcodeValue,
+                        product.Uom, product.Size, product.Color, product.ImageHash),
+                    new EffectiveValues(batch, productionDate, expiryDate, quantityText),
+                    new CartonValues(carton, allocation.Total, allocation.From, allocation.To,
+                        strategy.Format(carton, allocation)),
+                    new JobValues(jobNo, username, printerName, false),
+                    new SettingsValues(feedbackUrl, companyName, dateFormat, timestampFormat),
+                    now);
+
+                var bound = binder.Bind(mappings, context);
+                var byElement = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var (elementId, placeholder) in placeholderByElementId)
                 {
-                    byElement[bindable[i].Id] = value;
+                    if (bound.TryGetValue(placeholder, out var value))
+                    {
+                        byElement[elementId] = value;
+                    }
+                }
+
+                var png = rasterizer.RenderPng(definition, byElement, LoadCached);
+
+                // Copies are pages here; a GDI printer has no ^PQ equivalent.
+                for (var copy = 0; copy < copies; copy++)
+                {
+                    pages.Add(png);
                 }
             }
-
-            var png = rasterizer.RenderPng(definition, byElement, hash => LoadBitmap(hash, ct));
-
-            // Copies are pages here; a GDI printer has no ^PQ equivalent.
-            for (var copy = 0; copy < copies; copy++)
+        }
+        finally
+        {
+            foreach (var bitmap in bitmaps.Values)
             {
-                pages.Add(png);
+                bitmap?.Dispose();
             }
         }
 
@@ -225,14 +256,19 @@ public sealed class TemplateRenderService(
 
         var definition = Labels.Native.LabelDefinition.Parse(artifact);
         var payload = prepared.DefinePayload;
+        var bindable = Labels.Native.NativeTemplateAdapter.BindableElements(definition);
 
         foreach (var field in imageFields)
         {
+            // DetectedField.CommandIndex is the element's index in bindable
+            // order, so each image field resolves to ITS element — sizing every
+            // raster from the first image element would corrupt any template
+            // with two differently-sized images.
             var detected = prepared.Fields.FirstOrDefault(f => f.SampleValue == field.PlaceholderRef);
-            var element = detected is null
-                ? null
-                : definition.Elements.OfType<Labels.Native.ImageElement>()
-                    .ElementAtOrDefault(0);
+            var element = detected is not null
+                          && detected.CommandIndex >= 0 && detected.CommandIndex < bindable.Count
+                ? bindable[detected.CommandIndex] as Labels.Native.ImageElement
+                : null;
 
             var placeholder = $"^FN{field.PlaceholderRef}^FS";
             var raster = element is null
@@ -246,6 +282,26 @@ public sealed class TemplateRenderService(
         }
 
         return payload;
+    }
+
+    /// <summary>Element-id → placeholder-ref, keyed by the detected-field index
+    /// stored in sample_value at registration. Falls back to the row's own
+    /// position for legacy rows without one, which reproduces the old
+    /// behaviour exactly when sort_order equals declaration order.</summary>
+    internal static Dictionary<string, string> MapPlaceholdersToElements(
+        IReadOnlyList<TemplateFieldRow> fields,
+        IReadOnlyList<Labels.Native.LabelElement> bindable)
+    {
+        var byElementId = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        for (var i = 0; i < fields.Count; i++)
+        {
+            var index = int.TryParse(fields[i].SampleValue, out var detected) ? detected : i;
+            if (index >= 0 && index < bindable.Count)
+            {
+                byElementId[bindable[index].Id] = fields[i].PlaceholderRef;
+            }
+        }
+        return byElementId;
     }
 
     private static List<FieldMapping> BuildMappings(IReadOnlyList<TemplateFieldRow> fields) =>

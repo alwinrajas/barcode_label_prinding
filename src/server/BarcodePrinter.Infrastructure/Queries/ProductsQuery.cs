@@ -51,7 +51,7 @@ public sealed class ProductsQuery(IDbConnectionFactory connections)
 
         if (term.Length < 3)
         {
-            var rows = await conn.QueryAsync<Row>(new CommandDefinition($"""
+            var rows = (await conn.QueryAsync<Row>(new CommandDefinition($"""
                 SELECT {Columns}
                 FROM products p
                 LEFT JOIN uoms u ON u.id = p.uom_id
@@ -61,12 +61,12 @@ public sealed class ProductsQuery(IDbConnectionFactory connections)
                 ORDER BY p.code
                 LIMIT @limit
                 """,
-                new { term, limit = SearchLimit }, cancellationToken: ct));
-            return new PagedResult<ProductSummary>(rows.Select(Map).ToList(), null, false);
+                new { term, limit = SearchLimit + 1 }, cancellationToken: ct))).ToList();
+            return TruncatedSearchResult(rows);
         }
 
         // ≥3 chars: exact code hit ranked first, then ngram relevance.
-        var searchRows = await conn.QueryAsync<Row>(new CommandDefinition($"""
+        var searchRows = (await conn.QueryAsync<Row>(new CommandDefinition($"""
             SELECT {Columns},
                    (p.code = @term) AS exact_hit,
                    MATCH(p.search_text) AGAINST(@term IN BOOLEAN MODE) AS score
@@ -79,8 +79,22 @@ public sealed class ProductsQuery(IDbConnectionFactory connections)
             ORDER BY exact_hit DESC, score DESC, p.code
             LIMIT @limit
             """,
-            new { term, limit = SearchLimit }, cancellationToken: ct));
-        return new PagedResult<ProductSummary>(searchRows.Select(Map).ToList(), null, false);
+            new { term, limit = SearchLimit + 1 }, cancellationToken: ct))).ToList();
+        return TruncatedSearchResult(searchRows);
+    }
+
+    /// <summary>Search results are relevance-ordered and therefore not
+    /// cursor-paginable, but silently pretending 50 hits is everything made
+    /// the grid lie. HasMore=true with no cursor tells the client honestly:
+    /// "there are more matches — refine the search."</summary>
+    private static PagedResult<ProductSummary> TruncatedSearchResult(List<Row> rows)
+    {
+        var truncated = rows.Count > SearchLimit;
+        if (truncated)
+        {
+            rows.RemoveAt(rows.Count - 1);
+        }
+        return new PagedResult<ProductSummary>(rows.Select(Map).ToList(), null, truncated);
     }
 
     public async Task<ProductDetail?> GetDetailAsync(long id, CancellationToken ct)

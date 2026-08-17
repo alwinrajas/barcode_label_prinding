@@ -52,8 +52,8 @@ public static class TemplateEndpoints
                 var file = form.Files["file"];
                 if (file is null || file.Length == 0 || file.Length > MaxArtifactBytes)
                 {
-                    return Results.Problem(statusCode: 400, title: ErrorCodes.ValidationFailed,
-                        detail: "Attach the template file (max 2 MB).");
+                    throw new BarcodePrinter.Domain.DomainException(ErrorCodes.ValidationFailed,
+                        "Attach the template file (max 2 MB).");
                 }
 
                 var request = new RegisterTemplateRequest(

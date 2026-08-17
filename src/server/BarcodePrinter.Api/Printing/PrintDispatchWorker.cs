@@ -68,20 +68,59 @@ public sealed class PrintDispatchWorker(
 
     private async Task ConsumeAsync(long printerId, Channel<long> channel, CancellationToken ct)
     {
-        await foreach (var jobId in channel.Reader.ReadAllAsync(ct))
+        try
         {
-            try
+            await foreach (var jobId in channel.Reader.ReadAllAsync(ct))
             {
-                await DispatchAsync(jobId, ct);
+                try
+                {
+                    await DispatchAsync(jobId, ct);
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Dispatch failed for job {JobId} on printer {PrinterId}", jobId, printerId);
+                    try
+                    {
+                        await FailAsync(jobId, "DISPATCH_ERROR", ex.Message, CancellationToken.None);
+                    }
+                    catch (Exception failEx)
+                    {
+                        // The DB refused the failure write too; the job stays
+                        // Dispatching and startup recovery re-queues it. The
+                        // consumer must survive either way.
+                        logger.LogError(failEx, "Could not mark job {JobId} failed", jobId);
+                    }
+                }
             }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            // This task is fire-and-forget: without this handler a fault here
+            // would silently kill the printer's only consumer. Forget the
+            // channel so the next routed job creates a fresh one, and push any
+            // stranded jobs back through the main queue.
+            logger.LogError(ex,
+                "Dispatch consumer for printer {PrinterId} crashed; recreating on next job", printerId);
+            _perPrinter.TryRemove(printerId, out _);
+            channel.Writer.TryComplete();
+            while (channel.Reader.TryRead(out var stranded))
             {
-                return;
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Dispatch failed for job {JobId} on printer {PrinterId}", jobId, printerId);
-                await FailAsync(jobId, "DISPATCH_ERROR", ex.Message, CancellationToken.None);
+                try
+                {
+                    await queue.EnqueueAsync(stranded, CancellationToken.None);
+                }
+                catch (Exception requeueEx)
+                {
+                    logger.LogError(requeueEx, "Could not re-queue stranded job {JobId}", stranded);
+                    break;
+                }
             }
         }
     }
@@ -285,11 +324,14 @@ public sealed class PrintDispatchWorker(
 
 /// <summary>
 /// Fails jobs whose client dispatcher died (§7.4). The lease is the only thing
-/// that distinguishes "printing slowly" from "the workstation is gone".
+/// that distinguishes "printing slowly" from "the workstation is gone". Also
+/// sweeps client-dispatched jobs that were never collected at all — a job must
+/// never sit in Queued forever while the operator believes it printed.
 /// </summary>
 public sealed class PrintLeaseWatchdog(
     IDbConnectionFactory connections,
     IPrintJobStatusBroadcaster status,
+    BarcodePrinter.Application.Abstractions.ISettingsProvider settings,
     ILogger<PrintLeaseWatchdog> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -300,39 +342,92 @@ public sealed class PrintLeaseWatchdog(
             try
             {
                 await using var conn = await connections.OpenAsync(stoppingToken);
-
-                // Collected before the update, because afterwards they no longer
-                // match the predicate and the operator would never be told.
-                var losing = (await conn.QueryAsync<long>(new CommandDefinition(
-                    """
-                    SELECT CAST(id AS SIGNED) FROM print_jobs
-                    WHERE status IN ('Dispatching','Printing')
-                      AND lease_expires_at IS NOT NULL
-                      AND lease_expires_at < UTC_TIMESTAMP(3)
-                    """, cancellationToken: stoppingToken))).ToList();
-
-                var expired = await conn.ExecuteAsync(new CommandDefinition(
-                    """
-                    UPDATE print_jobs
-                    SET status = 'Failed', error_code = 'CLIENT_LOST',
-                        error_message = 'The workstation stopped responding while printing.',
-                        completed_at = UTC_TIMESTAMP(3)
-                    WHERE status IN ('Dispatching','Printing')
-                      AND lease_expires_at IS NOT NULL
-                      AND lease_expires_at < UTC_TIMESTAMP(3)
-                    """, cancellationToken: stoppingToken));
-                if (expired > 0)
-                {
-                    logger.LogWarning("{Count} print job(s) failed on expired client lease", expired);
-                    foreach (var jobId in losing)
-                    {
-                        await status.JobChangedAsync(jobId, stoppingToken);
-                    }
-                }
+                await FailExpiredLeasesAsync(conn, stoppingToken);
+                await FailUncollectedAsync(conn, stoppingToken);
             }
             catch (Exception ex)
             {
                 logger.LogError(ex, "Lease watchdog pass failed");
+            }
+        }
+    }
+
+    private async Task FailExpiredLeasesAsync(MySqlConnector.MySqlConnection conn, CancellationToken ct)
+    {
+        // Collected before the update, because afterwards they no longer
+        // match the predicate and the operator would never be told.
+        var losing = (await conn.QueryAsync<long>(new CommandDefinition(
+            """
+            SELECT CAST(id AS SIGNED) FROM print_jobs
+            WHERE status IN ('Dispatching','Printing')
+              AND lease_expires_at IS NOT NULL
+              AND lease_expires_at < UTC_TIMESTAMP(3)
+            """, cancellationToken: ct))).ToList();
+
+        var expired = await conn.ExecuteAsync(new CommandDefinition(
+            """
+            UPDATE print_jobs
+            SET status = 'Failed', error_code = 'CLIENT_LOST',
+                error_message = 'The workstation stopped responding while printing.',
+                completed_at = UTC_TIMESTAMP(3)
+            WHERE status IN ('Dispatching','Printing')
+              AND lease_expires_at IS NOT NULL
+              AND lease_expires_at < UTC_TIMESTAMP(3)
+            """, cancellationToken: ct));
+        if (expired > 0)
+        {
+            logger.LogWarning("{Count} print job(s) failed on expired client lease", expired);
+            foreach (var jobId in losing)
+            {
+                await status.JobChangedAsync(jobId, ct);
+            }
+        }
+    }
+
+    /// <summary>A client-dispatched job that no workstation claimed within the
+    /// timeout: the owner PC is off, the app is not running, or the machine was
+    /// renamed so its poll never matches. Fail it with a message that names the
+    /// workstation the printer expects, so the operator knows where to look.</summary>
+    private async Task FailUncollectedAsync(MySqlConnector.MySqlConnection conn, CancellationToken ct)
+    {
+        var minutes = int.TryParse(
+            await settings.GetAsync("Print:QueuedTimeoutMinutes", ct), out var configured) && configured > 0
+            ? configured
+            : 5;
+
+        var uncollected = (await conn.QueryAsync<long>(new CommandDefinition(
+            """
+            SELECT CAST(j.id AS SIGNED)
+            FROM print_jobs j
+            JOIN printers p ON p.id = j.printer_id
+            WHERE j.status = 'Queued' AND p.dispatch_mode = 'Client'
+              AND j.requested_at < UTC_TIMESTAMP(3) - INTERVAL @minutes MINUTE
+            """, new { minutes }, cancellationToken: ct))).ToList();
+        if (uncollected.Count == 0)
+        {
+            return;
+        }
+
+        var failed = await conn.ExecuteAsync(new CommandDefinition(
+            """
+            UPDATE print_jobs j
+            JOIN printers p ON p.id = j.printer_id
+            SET j.status = 'Failed', j.error_code = 'WORKSTATION_UNAVAILABLE',
+                j.error_message = CONCAT(
+                    'No workstation collected this job within ', @minutes, ' minute(s). ',
+                    'Printer ''', p.name, ''' prints from workstation ''',
+                    COALESCE(NULLIF(p.owner_workstation, ''), 'not configured'),
+                    ''' — check that PC is on and the application is running.'),
+                j.completed_at = UTC_TIMESTAMP(3)
+            WHERE j.status = 'Queued' AND p.dispatch_mode = 'Client'
+              AND j.requested_at < UTC_TIMESTAMP(3) - INTERVAL @minutes MINUTE
+            """, new { minutes }, cancellationToken: ct));
+        if (failed > 0)
+        {
+            logger.LogWarning("{Count} client-dispatched job(s) failed as uncollected", failed);
+            foreach (var jobId in uncollected)
+            {
+                await status.JobChangedAsync(jobId, ct);
             }
         }
     }

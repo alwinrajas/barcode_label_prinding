@@ -89,6 +89,7 @@ public static class DependencyInjection
 
         services.AddScoped<ReportQueries>();
         services.AddScoped<ReportExport>();
+        services.AddScoped<Admin.AuditExport>();
         services.AddSingleton<Dashboard.BackupStatusReader>();
         services.AddScoped<DashboardQueries>();
 

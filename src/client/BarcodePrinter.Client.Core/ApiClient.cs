@@ -176,27 +176,15 @@ public sealed class ApiClient(HttpClient http, ConnectionStatus connection)
         await ThrowIfProblemAsync(response, ct);
     }
 
-    /// <summary>Multipart cannot reuse a request factory (content streams are
-    /// single-shot), so no auto-retry — the caller re-invokes on failure.</summary>
-    public async Task<T> PostMultipartAsync<T>(string url, MultipartFormDataContent content, CancellationToken ct)
+    /// <summary>Multipart POST. Takes a content *factory* (a content stream is
+    /// single-shot) so the request goes through the same pipeline as every
+    /// other call — bearer header, refresh-on-401 retry, unreachable/timeout
+    /// mapping. Uploads no longer die when the access token expires.</summary>
+    public async Task<T> PostMultipartAsync<T>(
+        string url, Func<MultipartFormDataContent> contentFactory, CancellationToken ct)
     {
-        var request = new HttpRequestMessage(HttpMethod.Post, url) { Content = content };
-        request.Headers.Add("X-Correlation-Id", Guid.NewGuid().ToString());
-        if (_accessToken is not null)
-        {
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _accessToken);
-        }
-        HttpResponseMessage response;
-        try
-        {
-            response = await http.SendAsync(request, ct);
-            connection.ReportSuccess();
-        }
-        catch (HttpRequestException ex)
-        {
-            connection.ReportUnreachable();
-            throw new ApiUnreachableException(ex);
-        }
+        var response = await SendAsync(
+            () => new HttpRequestMessage(HttpMethod.Post, url) { Content = contentFactory() }, ct);
         return await ReadOrThrowAsync<T>(response, ct);
     }
 
@@ -219,7 +207,10 @@ public sealed class ApiClient(HttpClient http, ConnectionStatus connection)
     private async Task<HttpResponseMessage> SendRawAsync(
         Func<HttpRequestMessage> requestFactory, CancellationToken ct)
     {
-        var request = requestFactory();
+        // Disposing the request disposes its content chain — this is what
+        // deterministically closes the FileStream under a multipart upload,
+        // and it is why retries need a factory rather than a reusable request.
+        using var request = requestFactory();
         request.Headers.Add("X-Correlation-Id", Guid.NewGuid().ToString());
         if (_accessToken is not null)
         {

@@ -1,15 +1,41 @@
 <UserControl x:Class="BarcodePrinter.Wpf.Features.Products.ProductsView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             Background="{StaticResource Surface.Base}">
-    <Grid Margin="24">
+             xmlns:controls="clr-namespace:BarcodePrinter.Wpf.Controls"
+             Background="{StaticResource Surface.Base}"
+             PreviewKeyDown="OnPreviewKeyDown">
+    <UserControl.Resources>
+        <!-- Editable combo: the app-wide ComboBox template has no
+             PART_EditableTextBox, so free-text UOM entry needs its own.
+             Kept local rather than editing the shared design system. -->
+
+        <!-- Field label: 12 px above every input, 4 px below the text. -->
+        <Style x:Key="Local.FieldLabel" TargetType="TextBlock" BasedOn="{StaticResource Text.Label}">
+            <Setter Property="Margin" Value="0,12,0,4" />
+        </Style>
+
+        <Style x:Key="Local.FieldCaption" TargetType="TextBlock" BasedOn="{StaticResource Text.Caption}">
+            <Setter Property="Margin" Value="0,4,0,0" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+        </Style>
+
+        <Style x:Key="Local.MonoInput" TargetType="TextBox" BasedOn="{StaticResource Input.Text}">
+            <Setter Property="FontFamily" Value="{StaticResource Font.Mono}" />
+        </Style>
+
+        <Style x:Key="Local.GridMono" TargetType="TextBlock" BasedOn="{StaticResource Text.Mono}">
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+    </UserControl.Resources>
+
+    <Grid Margin="{StaticResource Pad.Page}">
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="*" />
             <ColumnDefinition Width="Auto" />
         </Grid.ColumnDefinitions>
 
-        <!-- ═══ Left: search + grid ═══ -->
-        <Grid Grid.Column="0" Margin="0,0,16,0">
+        <!-- ═══ Left: header, toolbar, grid, footer ═══ -->
+        <Grid Grid.Column="0">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
@@ -17,235 +43,362 @@
                 <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
-            <DockPanel Grid.Row="0" LastChildFill="False">
-                <TextBlock DockPanel.Dock="Left" Style="{StaticResource Text.H1}" Text="Products"
-                           VerticalAlignment="Center" />
-                <Button DockPanel.Dock="Right" Style="{StaticResource Button.Primary}"
-                        Content="＋ New product" Command="{Binding NewProductCommand}"
-                        Visibility="{Binding CanAdd, Converter={StaticResource BoolToVisibility}}" />
-            </DockPanel>
+            <controls:PageHeader Grid.Row="0" Title="Products"
+                                 Description="Products used for label printing.">
+                <controls:PageHeader.Actions>
+                    <Button Style="{StaticResource Button.Primary}" Content="Add product"
+                            Command="{Binding NewProductCommand}"
+                            Visibility="{Binding CanAdd, Converter={StaticResource BoolToVisibility}}" />
+                </controls:PageHeader.Actions>
+            </controls:PageHeader>
 
-            <TextBox Grid.Row="1" Margin="0,12,0,12" Style="{StaticResource Input.Text}"
-                     Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
-                     AutomationProperties.Name="Search products"
-                     Tag="Search by code or description…" />
+            <!-- Toolbar -->
+            <Border Grid.Row="1" Style="{StaticResource Card}" Padding="{StaticResource Pad.Card}"
+                    Margin="{StaticResource Gap.Below.MD}">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" MaxWidth="420" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
 
-            <Border Grid.Row="2" Background="{StaticResource Surface.Card}"
-                    BorderBrush="{StaticResource Border.Default}" BorderThickness="1" CornerRadius="8">
+                    <Grid Grid.Column="0">
+                        <TextBox x:Name="SearchBox" Style="{StaticResource Input.Search}"
+                                 Tag="Search by code, name or barcode…"
+                                 Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
+                                 AutomationProperties.Name="Search products" />
+                        <Button Style="{StaticResource Button.Icon}" Content="&#xE711;"
+                                HorizontalAlignment="Right" Margin="0,0,4,0"
+                                Command="{Binding ClearSearchCommand}"
+                                ToolTip="Clear search"
+                                AutomationProperties.Name="Clear search"
+                                Visibility="{Binding HasSearchText, Converter={StaticResource BoolToVisibility}}" />
+                    </Grid>
+
+                    <CheckBox Grid.Column="1" Margin="16,0,0,0" VerticalAlignment="Center"
+                              Content="Include inactive" IsChecked="{Binding IncludeInactive}" />
+
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" Margin="16,0,0,0"
+                                VerticalAlignment="Center">
+                        <TextBlock Style="{StaticResource Text.Label}" Text="Rows"
+                                   VerticalAlignment="Center" Margin="0,0,8,0" />
+                        <ComboBox Width="80" ItemsSource="{Binding PageSizes}"
+                                  SelectedItem="{Binding PageSize}"
+                                  AutomationProperties.Name="Rows per page" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <!-- Grid + the five states -->
+            <Border Grid.Row="2" Style="{StaticResource Card}" Padding="0">
                 <Grid>
                     <DataGrid ItemsSource="{Binding Items}" SelectedItem="{Binding SelectedRow}"
                               AutoGenerateColumns="False" IsReadOnly="True" HeadersVisibility="Column"
                               GridLinesVisibility="None" BorderThickness="0"
-                              Background="Transparent" RowHeight="44"
+                              Background="Transparent"
                               SelectionMode="Single" SelectionUnit="FullRow"
                               EnableRowVirtualization="True"
                               VirtualizingPanel.VirtualizationMode="Recycling"
                               LoadingRow="OnLoadingRow"
-                              FontFamily="{StaticResource Font.Ui}" FontSize="13">
+                              AutomationProperties.Name="Products">
                         <DataGrid.Columns>
-                            <DataGridTemplateColumn Width="56">
+                            <DataGridTemplateColumn Header="" Width="48" CanUserSort="False">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
-                                        <Border Width="36" Height="36" CornerRadius="4"
+                                        <Border Width="28" Height="28" CornerRadius="4"
+                                                VerticalAlignment="Center"
                                                 Background="{StaticResource Surface.Sunken}">
                                             <Image Source="{Binding Thumbnail}" Stretch="UniformToFill" />
                                         </Border>
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTextColumn Header="Code" Binding="{Binding Code}" Width="150">
-                                <DataGridTextColumn.ElementStyle>
-                                    <Style TargetType="TextBlock">
-                                        <!-- Monospace: 0/O and 1/l/I must be distinguishable (§12) -->
-                                        <Setter Property="FontFamily" Value="{StaticResource Font.Mono}" />
-                                        <Setter Property="VerticalAlignment" Value="Center" />
-                                    </Style>
-                                </DataGridTextColumn.ElementStyle>
-                            </DataGridTextColumn>
-                            <DataGridTextColumn Header="Description" Binding="{Binding Description}" Width="*" />
+                            <DataGridTextColumn Header="Code" Binding="{Binding Code}" Width="150"
+                                                ElementStyle="{StaticResource Local.GridMono}" />
+                            <DataGridTextColumn Header="Product Name" Binding="{Binding Description}"
+                                                Width="*" MinWidth="160" />
                             <DataGridTextColumn Header="UOM" Binding="{Binding Uom}" Width="70" />
                             <DataGridTextColumn Header="Size" Binding="{Binding Size}" Width="80" />
                             <DataGridTextColumn Header="Color" Binding="{Binding Color}" Width="100" />
                             <DataGridTextColumn Header="Batch" Binding="{Binding DefaultBatch}" Width="110" />
-                            <DataGridTemplateColumn Header="Status" Width="90">
+                            <DataGridTemplateColumn Header="Status" Width="110" CanUserSort="False">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
-                                        <!-- Status: colour + text, never colour alone (§12) -->
-                                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                            <Ellipse Width="8" Height="8" VerticalAlignment="Center">
-                                                <Ellipse.Style>
-                                                    <Style TargetType="Ellipse">
-                                                        <Setter Property="Fill" Value="{StaticResource Accent.Success}" />
-                                                        <Style.Triggers>
-                                                            <DataTrigger Binding="{Binding IsActive}" Value="False">
-                                                                <Setter Property="Fill" Value="{StaticResource Text.Secondary}" />
-                                                            </DataTrigger>
-                                                        </Style.Triggers>
-                                                    </Style>
-                                                </Ellipse.Style>
-                                            </Ellipse>
-                                            <TextBlock Margin="6,0,0,0" VerticalAlignment="Center">
-                                                <TextBlock.Style>
-                                                    <Style TargetType="TextBlock">
-                                                        <Setter Property="Text" Value="Active" />
-                                                        <Style.Triggers>
-                                                            <DataTrigger Binding="{Binding IsActive}" Value="False">
-                                                                <Setter Property="Text" Value="Inactive" />
-                                                            </DataTrigger>
-                                                        </Style.Triggers>
-                                                    </Style>
-                                                </TextBlock.Style>
-                                            </TextBlock>
-                                        </StackPanel>
+                                        <controls:StatusPill Status="{Binding StatusKey}"
+                                                             Text="{Binding StatusText}"
+                                                             VerticalAlignment="Center" />
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
                         </DataGrid.Columns>
                     </DataGrid>
 
-                    <!-- Empty / error state -->
-                    <TextBlock Text="{Binding StatusMessage}" Style="{StaticResource Text.Body}"
-                               Foreground="{StaticResource Text.Secondary}"
-                               HorizontalAlignment="Center" VerticalAlignment="Center"
-                               TextWrapping="Wrap" MaxWidth="400" TextAlignment="Center"
-                               Visibility="{Binding StatusMessage, Converter={StaticResource NullToCollapsed}}" />
+                    <!-- EMPTY: nothing here at all -->
+                    <controls:EmptyState Glyph="&#xE7B8;" Title="No products yet"
+                                         Message="Add your first product to start printing."
+                                         Visibility="{Binding ShowNoProductsState, Converter={StaticResource BoolToVisibility}}">
+                        <controls:EmptyState.Action>
+                            <Button Style="{StaticResource Button.Primary}" Content="Add product"
+                                    Command="{Binding NewProductCommand}"
+                                    Visibility="{Binding CanAdd, Converter={StaticResource BoolToVisibility}}" />
+                        </controls:EmptyState.Action>
+                    </controls:EmptyState>
 
-                    <ProgressBar Height="3" VerticalAlignment="Top" IsIndeterminate="True"
+                    <!-- EMPTY: the search found nothing -->
+                    <controls:EmptyState Glyph="&#xE721;" Title="No matches"
+                                         Message="{Binding NoMatchesMessage}"
+                                         Visibility="{Binding ShowNoMatchesState, Converter={StaticResource BoolToVisibility}}">
+                        <controls:EmptyState.Action>
+                            <Button Style="{StaticResource Button.Secondary}" Content="Clear search"
+                                    Command="{Binding ClearSearchCommand}" />
+                        </controls:EmptyState.Action>
+                    </controls:EmptyState>
+
+                    <!-- ERROR -->
+                    <controls:ErrorState Message="{Binding ListErrorMessage}"
+                                         Reference="{Binding ListErrorReference}"
+                                         RetryCommand="{Binding RefreshCommand}"
+                                         Visibility="{Binding ShowErrorState, Converter={StaticResource BoolToVisibility}}" />
+
+                    <!-- Non-blocking refresh bar; blocking only on first paint -->
+                    <ProgressBar Height="2" VerticalAlignment="Top" IsIndeterminate="True"
                                  BorderThickness="0" Background="Transparent"
                                  Foreground="{StaticResource Brand.Primary}"
                                  Visibility="{Binding IsLoading, Converter={StaticResource BoolToVisibility}}" />
+
+                    <controls:BusyOverlay IsActive="{Binding ShowInitialBusy}" Text="Loading products…" />
                 </Grid>
             </Border>
 
-            <Button Grid.Row="3" Margin="0,12,0,0" HorizontalAlignment="Center"
-                    Content="Load more" Command="{Binding LoadMoreCommand}"
-                    Style="{StaticResource Button.Primary}"
-                    Visibility="{Binding HasMore, Converter={StaticResource BoolToVisibility}}" />
+            <!-- Footer: cursor paging, or the search-cap explanation -->
+            <Grid Grid.Row="3">
+                <controls:LoadMoreFooter HasMore="{Binding ShowLoadMore}" IsLoading="{Binding IsLoading}"
+                                         Command="{Binding LoadMoreCommand}"
+                                         CountText="{Binding CountText}"
+                                         Visibility="{Binding ShowSearchTruncation, Converter={StaticResource InverseBoolToVisibility}}" />
+                <Border Background="{StaticResource Brush.Info.Soft}" CornerRadius="6"
+                        Padding="12,8" Margin="0,12,0,0"
+                        Visibility="{Binding ShowSearchTruncation, Converter={StaticResource BoolToVisibility}}">
+                    <TextBlock Style="{StaticResource Text.Caption}" TextWrapping="Wrap"
+                               Foreground="{StaticResource Accent.Info}"
+                               Text="{Binding SearchTruncationMessage}" />
+                </Border>
+            </Grid>
         </Grid>
 
         <!-- ═══ Right: detail drawer ═══ -->
-        <Border Grid.Column="1" Width="400" Style="{StaticResource Card}" Padding="20"
+        <Border Grid.Column="1" Width="400" Margin="16,0,0,0" Padding="0"
+                Style="{StaticResource Card}"
+                KeyboardNavigation.TabNavigation="Local"
                 Visibility="{Binding Editor, Converter={StaticResource NullToCollapsed}}">
-            <ScrollViewer VerticalScrollBarVisibility="Auto">
-                <StackPanel DataContext="{Binding}" >
-                    <TextBlock Style="{StaticResource Text.H1}" Text="{Binding Editor.Title}" />
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
 
-                    <!-- Image -->
-                    <Border Margin="0,16,0,0" Height="140" CornerRadius="6"
-                            Background="{StaticResource Surface.Sunken}">
+                <!-- Drawer header -->
+                <Grid Grid.Row="0" Margin="16,14,10,12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Style="{StaticResource Text.H2}" VerticalAlignment="Center"
+                               Text="{Binding Editor.Title}" />
+                    <Button Grid.Column="1" Style="{StaticResource Button.Icon}" Content="&#xE711;"
+                            Command="{Binding CloseEditorCommand}"
+                            ToolTip="Close" AutomationProperties.Name="Close" />
+                </Grid>
+
+                <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="16,0,16,16">
+                    <StackPanel>
+
+                        <!-- Validation / conflict, at the top where it is read -->
+                        <Border Background="{StaticResource Brush.Danger.Soft}" CornerRadius="6"
+                                Padding="12,10" Margin="0,0,0,12"
+                                Visibility="{Binding Editor.ErrorMessage, Converter={StaticResource NullToCollapsed}}">
+                            <TextBlock Style="{StaticResource Text.Body}" TextWrapping="Wrap"
+                                       Foreground="{StaticResource Accent.Danger}"
+                                       Text="{Binding Editor.ErrorMessage}" />
+                        </Border>
+                        <Border Background="{StaticResource Brush.Success.Soft}" CornerRadius="6"
+                                Padding="12,10" Margin="0,0,0,12"
+                                Visibility="{Binding Editor.SavedMessage, Converter={StaticResource NullToCollapsed}}">
+                            <TextBlock Style="{StaticResource Text.Body}" TextWrapping="Wrap"
+                                       Foreground="{StaticResource Accent.Success}"
+                                       Text="{Binding Editor.SavedMessage}" />
+                        </Border>
+
+                        <!-- ── Product image ── -->
+                        <TextBlock Style="{StaticResource Text.Label}" Text="Product image" Margin="0,0,0,4" />
+                        <Border Height="180" CornerRadius="6" Background="{StaticResource Surface.Sunken}"
+                                BorderBrush="{StaticResource Border.Default}" BorderThickness="1">
+                            <Grid>
+                                <Image Source="{Binding EditorImage}" Stretch="Uniform" Margin="10" />
+                                <TextBlock Style="{StaticResource Text.Caption}" MaxWidth="240"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center"
+                                           TextAlignment="Center" TextWrapping="Wrap"
+                                           Text="{Binding Editor.ImagePlaceholderText}"
+                                           Visibility="{Binding EditorImage, Converter={StaticResource NullToVisible}}" />
+                            </Grid>
+                        </Border>
+
+                        <StackPanel Visibility="{Binding CanEdit, Converter={StaticResource BoolToVisibility}}">
+                            <WrapPanel Margin="0,8,0,0">
+                                <Button Style="{StaticResource Button.Secondary}" Content="Choose image…"
+                                        Margin="0,0,8,0"
+                                        Command="{Binding UploadImageCommand}"
+                                        IsEnabled="{Binding Editor.IsBusy, Converter={StaticResource InverseBool}}" />
+                                <!-- A mistaken pick would otherwise be stuck until the drawer is discarded. -->
+                                <Button Style="{StaticResource Button.Ghost}" Content="Remove"
+                                        Margin="0,0,8,0"
+                                        Command="{Binding RemovePendingImageCommand}"
+                                        AutomationProperties.Name="Remove selected image"
+                                        IsEnabled="{Binding Editor.IsBusy, Converter={StaticResource InverseBool}}"
+                                        Visibility="{Binding Editor.HasPendingImage, Converter={StaticResource BoolToVisibility}}" />
+                                <!-- Only after a create succeeded but its image upload did not. -->
+                                <Button Style="{StaticResource Button.Secondary}" Content="Retry image upload"
+                                        Command="{Binding RetryImageUploadCommand}"
+                                        IsEnabled="{Binding Editor.IsBusy, Converter={StaticResource InverseBool}}"
+                                        Visibility="{Binding Editor.CanRetryImageUpload, Converter={StaticResource BoolToVisibility}}" />
+                            </WrapPanel>
+
+                            <StackPanel Margin="0,8,0,0"
+                                        Visibility="{Binding IsUploadingImage, Converter={StaticResource BoolToVisibility}}">
+                                <ProgressBar Height="6" Minimum="0" Maximum="1"
+                                             Value="{Binding UploadProgress, Mode=OneWay}" />
+                                <TextBlock Style="{StaticResource Text.Caption}" Margin="0,4,0,0"
+                                           Text="{Binding UploadProgress, StringFormat=Uploading… {0:P0}}" />
+                            </StackPanel>
+
+                            <TextBlock Style="{StaticResource Local.FieldCaption}"
+                                       Text="{Binding Editor.ImageCaption}"
+                                       Visibility="{Binding Editor.ImageCaption, Converter={StaticResource NullToCollapsed}}" />
+                            <TextBlock Style="{StaticResource Local.FieldCaption}"
+                                       Text="JPG, PNG or WebP, up to 5 MB." />
+                        </StackPanel>
+
+                        <!-- ── Product information ── -->
+                        <TextBlock Style="{StaticResource Text.H2}" Text="Product information"
+                                   Margin="0,4,0,8" />
+
+                        <TextBlock Style="{StaticResource Local.FieldLabel}" Text="Product code *" />
+                        <TextBox Style="{StaticResource Local.MonoInput}"
+                                 AutomationProperties.Name="Product code"
+                                 Text="{Binding Editor.Code, UpdateSourceTrigger=PropertyChanged}" />
+                        <!-- One value, not two: the code IS the barcode, so there is
+                             nothing here that can drift out of step with the label. -->
+                        <TextBlock Style="{StaticResource Local.FieldCaption}"
+                                   Text="Also used as the barcode printed on the label." />
+
+                        <TextBlock Style="{StaticResource Local.FieldLabel}" Text="Product name *" />
+                        <TextBox Style="{StaticResource Input.Text}"
+                                 AutomationProperties.Name="Product name"
+                                 Text="{Binding Editor.Description, UpdateSourceTrigger=PropertyChanged}" />
+
+                        <!-- ── Unit of measure ── -->
+                        <TextBlock Style="{StaticResource Local.FieldLabel}" Text="UOM" />
+                        <ComboBox Style="{StaticResource Input.ComboBox.Editable}"
+                                  ItemsSource="{Binding Uoms}" DisplayMemberPath="Code"
+                                  AutomationProperties.Name="Unit of measure"
+                                  Text="{Binding Editor.UomText, UpdateSourceTrigger=PropertyChanged}" />
+                        <TextBlock Style="{StaticResource Local.FieldCaption}"
+                                   Text="Pick an existing unit or type a new one (max 16 characters)." />
+                        <TextBlock Style="{StaticResource Local.FieldCaption}"
+                                   Foreground="{StaticResource Accent.Warning}"
+                                   Text="{Binding UomWarning}"
+                                   Visibility="{Binding UomLookupFailed, Converter={StaticResource BoolToVisibility}}" />
+
+                        <!-- ── Descriptors ── -->
                         <Grid>
-                            <Image Source="{Binding EditorImage}" Stretch="Uniform" Margin="8" />
-                            <TextBlock Text="No image" Style="{StaticResource Text.Caption}"
-                                       HorizontalAlignment="Center" VerticalAlignment="Center"
-                                       Visibility="{Binding EditorImage, Converter={StaticResource NullToVisible}}" />
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="12" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0">
+                                <TextBlock Style="{StaticResource Local.FieldLabel}" Text="Size" />
+                                <TextBox Style="{StaticResource Input.Text}"
+                                         AutomationProperties.Name="Size"
+                                         Text="{Binding Editor.Size, UpdateSourceTrigger=PropertyChanged}" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="2">
+                                <TextBlock Style="{StaticResource Local.FieldLabel}" Text="Color" />
+                                <TextBox Style="{StaticResource Input.Text}"
+                                         AutomationProperties.Name="Color"
+                                         Text="{Binding Editor.Color, UpdateSourceTrigger=PropertyChanged}" />
+                            </StackPanel>
                         </Grid>
-                    </Border>
-                    <Button Margin="0,8,0,0" Content="Upload image…" HorizontalAlignment="Left"
-                            Command="{Binding UploadImageCommand}"
-                            Style="{StaticResource Button.Primary}" Height="32"
-                            Visibility="{Binding CanEdit, Converter={StaticResource BoolToVisibility}}" />
 
-                    <!-- Fields -->
-                    <TextBlock Style="{StaticResource Text.Label}" Text="Product code *" Margin="0,16,0,4" />
-                    <TextBox Style="{StaticResource Input.Text}" FontFamily="{StaticResource Font.Mono}"
-                             Text="{Binding Editor.Code, UpdateSourceTrigger=PropertyChanged}" />
+                        <TextBlock Style="{StaticResource Local.FieldLabel}" Text="Default batch" />
+                        <TextBox Style="{StaticResource Input.Text}"
+                                 AutomationProperties.Name="Default batch"
+                                 Text="{Binding Editor.DefaultBatch, UpdateSourceTrigger=PropertyChanged}" />
 
-                    <TextBlock Style="{StaticResource Text.Label}" Text="Description *" Margin="0,12,0,4" />
-                    <TextBox Style="{StaticResource Input.Text}"
-                             Text="{Binding Editor.Description, UpdateSourceTrigger=PropertyChanged}" />
+                        <!-- ── Defaults ── -->
+                        <!-- Production and expiry dates are deliberately absent: they
+                             describe a print RUN, not a product, and are entered on the
+                             Print Labels screen (defaulting to today / today + 1 year). -->
+                        <TextBlock Style="{StaticResource Text.H2}" Text="Inventory and packaging"
+                                   Margin="0,12,0,8" />
 
-                    <Grid Margin="0,12,0,0">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="12" />
-                            <ColumnDefinition Width="*" />
-                        </Grid.ColumnDefinitions>
-                        <StackPanel Grid.Column="0">
-                            <TextBlock Style="{StaticResource Text.Label}" Text="UOM" Margin="0,0,0,4" />
-                            <ComboBox Height="36" ItemsSource="{Binding Uoms}"
-                                      SelectedValue="{Binding Editor.UomId}"
-                                      SelectedValuePath="Id" DisplayMemberPath="Code" />
-                        </StackPanel>
-                        <StackPanel Grid.Column="2">
-                            <TextBlock Style="{StaticResource Text.Label}" Text="Size" Margin="0,0,0,4" />
-                            <TextBox Style="{StaticResource Input.Text}"
-                                     Text="{Binding Editor.Size, UpdateSourceTrigger=PropertyChanged}" />
-                        </StackPanel>
-                    </Grid>
+                        <TextBlock Style="{StaticResource Local.FieldLabel}" Text="Default quantity" />
+                        <TextBox Style="{StaticResource Local.MonoInput}"
+                                 AutomationProperties.Name="Default quantity"
+                                 Text="{Binding Editor.DefaultQuantityText, UpdateSourceTrigger=PropertyChanged}" />
+                        <TextBlock Style="{StaticResource Local.FieldCaption}"
+                                   Text="Printed as typed, e.g. 750[D]." />
 
-                    <Grid Margin="0,12,0,0">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="12" />
-                            <ColumnDefinition Width="*" />
-                        </Grid.ColumnDefinitions>
-                        <StackPanel Grid.Column="0">
-                            <TextBlock Style="{StaticResource Text.Label}" Text="Color" Margin="0,0,0,4" />
-                            <TextBox Style="{StaticResource Input.Text}"
-                                     Text="{Binding Editor.Color, UpdateSourceTrigger=PropertyChanged}" />
-                        </StackPanel>
-                        <StackPanel Grid.Column="2">
-                            <TextBlock Style="{StaticResource Text.Label}" Text="Default batch" Margin="0,0,0,4" />
-                            <TextBox Style="{StaticResource Input.Text}"
-                                     Text="{Binding Editor.DefaultBatch, UpdateSourceTrigger=PropertyChanged}" />
-                        </StackPanel>
-                    </Grid>
-
-                    <Grid Margin="0,12,0,0">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="12" />
-                            <ColumnDefinition Width="*" />
-                        </Grid.ColumnDefinitions>
-                        <StackPanel Grid.Column="0">
-                            <TextBlock Style="{StaticResource Text.Label}" Text="Production date" Margin="0,0,0,4" />
-                            <DatePicker Height="36" SelectedDate="{Binding Editor.DefaultProductionDate}" />
-                        </StackPanel>
-                        <StackPanel Grid.Column="2">
-                            <TextBlock Style="{StaticResource Text.Label}" Text="Expiry date" Margin="0,0,0,4" />
-                            <DatePicker Height="36" SelectedDate="{Binding Editor.DefaultExpiryDate}" />
-                        </StackPanel>
-                    </Grid>
-
-                    <Grid Margin="0,12,0,0">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="12" />
-                            <ColumnDefinition Width="*" />
-                        </Grid.ColumnDefinitions>
-                        <StackPanel Grid.Column="0">
-                            <TextBlock Style="{StaticResource Text.Label}" Text="Quantity text (e.g. 750[D])" Margin="0,0,0,4" />
-                            <TextBox Style="{StaticResource Input.Text}"
-                                     Text="{Binding Editor.DefaultQuantityText, UpdateSourceTrigger=PropertyChanged}" />
-                        </StackPanel>
-                        <StackPanel Grid.Column="2">
-                            <TextBlock Style="{StaticResource Text.Label}" Text="Carton quantity" Margin="0,0,0,4" />
-                            <TextBox Style="{StaticResource Input.Text}"
-                                     Text="{Binding Editor.CartonQuantityText, UpdateSourceTrigger=PropertyChanged}" />
-                        </StackPanel>
-                    </Grid>
-
-                    <!-- Messages -->
-                    <TextBlock Margin="0,12,0,0" Style="{StaticResource Text.Caption}"
-                               Foreground="{StaticResource Accent.Danger}" TextWrapping="Wrap"
-                               Text="{Binding Editor.ErrorMessage}" />
-                    <TextBlock Margin="0,4,0,0" Style="{StaticResource Text.Caption}"
-                               Foreground="{StaticResource Accent.Success}"
-                               Text="{Binding Editor.SavedMessage}" />
-
-                    <!-- Actions -->
-                    <StackPanel Orientation="Horizontal" Margin="0,16,0,0">
-                        <Button Style="{StaticResource Button.Primary}" Content="Save"
-                                Command="{Binding SaveCommand}"
-                                IsEnabled="{Binding Editor.IsBusy, Converter={StaticResource InverseBool}}"
-                                Visibility="{Binding CanEdit, Converter={StaticResource BoolToVisibility}}" />
-                        <Button Margin="12,0,0,0" Height="40" Padding="16,0"
-                                Content="{Binding Editor.ActiveActionLabel}"
-                                Command="{Binding ToggleActiveCommand}"
-                                Visibility="{Binding CanDelete, Converter={StaticResource BoolToVisibility}}" />
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="12" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0">
+                                <TextBlock Style="{StaticResource Local.FieldLabel}" Text="Carton quantity" />
+                                <TextBox Style="{StaticResource Input.Text}"
+                                         AutomationProperties.Name="Carton quantity"
+                                         Text="{Binding Editor.CartonQuantityText, UpdateSourceTrigger=PropertyChanged}" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="2">
+                                <TextBlock Style="{StaticResource Local.FieldLabel}" Text="Cartons per pallet" />
+                                <TextBox Style="{StaticResource Input.Text}"
+                                         AutomationProperties.Name="Cartons per pallet"
+                                         Text="{Binding Editor.CartonsPerPalletText, UpdateSourceTrigger=PropertyChanged}" />
+                            </StackPanel>
+                        </Grid>
                     </StackPanel>
-                </StackPanel>
-            </ScrollViewer>
+                </ScrollViewer>
+
+                <!-- Drawer footer -->
+                <Border Grid.Row="2" BorderBrush="{StaticResource Border.Default}"
+                        BorderThickness="0,1,0,0" Padding="16,12">
+                    <StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,10"
+                                    Visibility="{Binding CanDelete, Converter={StaticResource BoolToVisibility}}">
+                            <Button Style="{StaticResource Button.Danger}" Content="Deactivate"
+                                    Command="{Binding ToggleActiveCommand}"
+                                    Visibility="{Binding Editor.CanDeactivate, Converter={StaticResource BoolToVisibility}}" />
+                            <Button Style="{StaticResource Button.Secondary}" Content="Activate"
+                                    Command="{Binding ToggleActiveCommand}"
+                                    Visibility="{Binding Editor.CanActivate, Converter={StaticResource BoolToVisibility}}" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                            <Button Style="{StaticResource Button.Secondary}" Content="Cancel"
+                                    MinWidth="88" Command="{Binding CloseEditorCommand}" />
+                            <Button Style="{StaticResource Button.Primary}" Content="Save"
+                                    MinWidth="88" Margin="8,0,0,0"
+                                    Command="{Binding SaveCommand}"
+                                    IsEnabled="{Binding Editor.IsBusy, Converter={StaticResource InverseBool}}"
+                                    Visibility="{Binding CanEdit, Converter={StaticResource BoolToVisibility}}" />
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <controls:BusyOverlay Grid.RowSpan="3" IsActive="{Binding IsEditorBusy}" Text="Saving…" />
+            </Grid>
         </Border>
     </Grid>
 </UserControl>

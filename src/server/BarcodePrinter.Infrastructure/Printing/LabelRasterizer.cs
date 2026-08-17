@@ -210,10 +210,10 @@ public sealed class LabelRasterizer(ILogger<LabelRasterizer> logger)
             return;
         }
 
-        using (bitmap)
-        {
-            canvas.DrawBitmap(bitmap, box);
-        }
+        // The LOADER owns the bitmap's lifetime — a multi-label job hands the
+        // same decoded instance to every label, so disposing it here would
+        // corrupt every label after the first.
+        canvas.DrawBitmap(bitmap, box);
     }
 
     private static void DrawBox(SKCanvas canvas, LabelDefinition label, BoxElement box, int x, int y)

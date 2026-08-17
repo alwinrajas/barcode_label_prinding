@@ -38,13 +38,34 @@ public sealed class ImportPipeline(
 {
     private const int ChunkSize = 5_000;
 
-    private static readonly string[] DateFormats =
-        ["dd/MM/yyyy", "d/M/yyyy", "yyyy-MM-dd", "dd-MM-yyyy", "dd/MMM/yyyy", "d-MMM-yyyy"];
+    // Lengths mirror `products` in 0002_product.sql — a value that would not fit
+    // must be reported as a row error, never blow up the whole bulk upsert.
+    private const int CodeMax = 64;          // products.code            VARCHAR(64)
+    private const int DescriptionMax = 255;  // products.description     VARCHAR(255)
+    private const int SizeMax = 64;          // products.size            VARCHAR(64)
+    private const int ColorMax = 64;         // products.color           VARCHAR(64)
+    private const int BatchMax = 64;         // products.default_batch   VARCHAR(64)
 
-    // Column order must match BuildChunkTable and the template (§ExcelTemplate).
+    /// <summary>
+    /// THE import contract. Only product-master fields live here:
+    ///  • Category was removed — product_categories is never populated (no seed,
+    ///    no create endpoint, no UI), so every non-blank value rejected its row.
+    ///    products.category_id is left untouched by the importer, not nulled.
+    ///  • Production/Expiry Date were removed — they are print-run values entered
+    ///    on the Print Labels screen, not product master.
+    ///  • There is no Barcode column: the product code IS the barcode value
+    ///    (the label resolves COALESCE(NULLIF(barcode_value,''), code)).
+    /// Unknown columns in an uploaded file are IGNORED, never rejected: customers
+    /// already hold files carrying Category / date / barcode columns.
+    /// Column order must match BuildChunkTable and the template (§ExcelTemplate).
+    /// </summary>
     public static readonly string[] TemplateHeaders =
         ["Code", "Description", "UOM", "Size", "Color", "Batch",
-         "Production Date", "Expiry Date", "Quantity", "Carton Quantity", "Category"];
+         "Quantity", "Carton Quantity", "Cartons per Pallet"];
+
+    /// <summary>Staging column for the parsed Cartons per Pallet value, added by
+    /// migration 0012 so the value travels in a column that means what it says.</summary>
+    private const string CartonsPerPalletColumn = "n_cartons_per_pallet";
 
     public async Task ProcessAsync(long batchId, CancellationToken ct)
     {
@@ -190,7 +211,7 @@ public sealed class ImportPipeline(
                     cmd.Parameters.AddWithValue($"@r{i}", chunk[i].RowNo);
                     cmd.Parameters.AddWithValue($"@c{i}", chunk[i].Column);
                     cmd.Parameters.AddWithValue($"@e{i}", chunk[i].Code);
-                    cmd.Parameters.AddWithValue($"@m{i}", chunk[i].Message);
+                    cmd.Parameters.AddWithValue($"@m{i}", Truncate(chunk[i].Message, 512));
                     cmd.Parameters.AddWithValue($"@v{i}", Truncate(chunk[i].RawValue, 500));
                 }
                 await cmd.ExecuteNonQueryAsync(ct);
@@ -210,38 +231,46 @@ public sealed class ImportPipeline(
     {
         var before = errors.Count;
 
+        // Only the contract columns are read. Anything else in the sheet
+        // (Category, Production Date, Expiry Date, Barcode, the customer's own
+        // notes) is simply not looked at, and therefore cannot fail a row.
         var code = Text(row, "code");
         var description = Text(row, "description");
         var uom = Text(row, "uom");
         var size = Text(row, "size");
         var color = Text(row, "color");
         var batchText = Text(row, "batch");
-        var category = Text(row, "category");
 
         if (string.IsNullOrEmpty(code))
         {
-            errors.Add(new(rowNo, "Code", "REQUIRED", "Product code is required.", code));
+            errors.Add(Error(rowNo, code, "Code", "REQUIRED", "Product code is required.", code));
         }
-        else if (code.Length > 64)
+        else if (code.Length > CodeMax)
         {
-            errors.Add(new(rowNo, "Code", "TOO_LONG", "Product code exceeds 64 characters.", code));
+            errors.Add(Error(rowNo, code, "Code", "TOO_LONG",
+                $"Product code exceeds {CodeMax} characters.", code));
         }
 
         if (string.IsNullOrEmpty(description))
         {
-            errors.Add(new(rowNo, "Description", "REQUIRED", "Description is required.", description));
+            errors.Add(Error(rowNo, code, "Description", "REQUIRED", "Description is required.", description));
         }
-        else if (description.Length > 255)
+        else if (description.Length > DescriptionMax)
         {
-            errors.Add(new(rowNo, "Description", "TOO_LONG", "Description exceeds 255 characters.", description));
+            errors.Add(Error(rowNo, code, "Description", "TOO_LONG",
+                $"Description exceeds {DescriptionMax} characters.", description));
         }
+
+        CheckLength(rowNo, code, "Size", size, SizeMax, errors);
+        CheckLength(rowNo, code, "Color", color, ColorMax, errors);
+        CheckLength(rowNo, code, "Batch", batchText, BatchMax, errors);
 
         long? uomId = null;
         if (!string.IsNullOrEmpty(uom))
         {
             if (!lookups.Uoms.TryGetValue(uom, out var resolved))
             {
-                errors.Add(new(rowNo, "UOM", "UNKNOWN",
+                errors.Add(Error(rowNo, code, "UOM", "UNKNOWN",
                     $"UOM '{uom}' does not exist. Valid values: {lookups.UomList}.", uom));
             }
             else
@@ -250,29 +279,9 @@ public sealed class ImportPipeline(
             }
         }
 
-        long? categoryId = null;
-        if (!string.IsNullOrEmpty(category))
-        {
-            if (!lookups.Categories.TryGetValue(category, out var resolved))
-            {
-                errors.Add(new(rowNo, "Category", "UNKNOWN", $"Category '{category}' does not exist.", category));
-            }
-            else
-            {
-                categoryId = resolved;
-            }
-        }
-
-        var prodDate = ParseDate(row, "production date", rowNo, "Production Date", errors);
-        var expDate = ParseDate(row, "expiry date", rowNo, "Expiry Date", errors);
-        if (prodDate is { } p && expDate is { } e && e < p)
-        {
-            errors.Add(new(rowNo, "Expiry Date", "BEFORE_PRODUCTION",
-                "Expiry date is before the production date.", expDate?.ToString("yyyy-MM-dd")));
-        }
-
-        var quantity = ParseDecimal(row, "quantity", rowNo, "Quantity", errors);
-        var cartonQty = ParseDecimal(row, "carton quantity", rowNo, "Carton Quantity", errors);
+        var quantity = ParseDecimal(row, "quantity", rowNo, code, "Quantity", errors);
+        var cartonQty = ParseDecimal(row, "carton quantity", rowNo, code, "Carton Quantity", errors);
+        var cartonsPerPallet = ParseInt(row, "cartons per pallet", rowNo, code, "Cartons per Pallet", errors);
 
         var isValid = errors.Count == before;
 
@@ -285,20 +294,37 @@ public sealed class ImportPipeline(
         r["c_size"] = (object?)size ?? DBNull.Value;
         r["c_color"] = (object?)color ?? DBNull.Value;
         r["c_batch"] = (object?)batchText ?? DBNull.Value;
-        r["c_production_date"] = (object?)Text(row, "production date") ?? DBNull.Value;
-        r["c_expiry_date"] = (object?)Text(row, "expiry date") ?? DBNull.Value;
         r["c_quantity"] = (object?)Text(row, "quantity") ?? DBNull.Value;
         r["c_carton_qty"] = (object?)Text(row, "carton quantity") ?? DBNull.Value;
-        r["c_category"] = (object?)category ?? DBNull.Value;
         r["is_valid"] = isValid;
-        r["n_production_date"] = (object?)prodDate ?? DBNull.Value;
-        r["n_expiry_date"] = (object?)expDate ?? DBNull.Value;
         r["n_quantity"] = (object?)quantity ?? DBNull.Value;
         r["n_carton_qty"] = (object?)cartonQty ?? DBNull.Value;
         r["n_uom_id"] = (object?)uomId ?? DBNull.Value;
-        r["n_category_id"] = (object?)categoryId ?? DBNull.Value;
+        r[CartonsPerPalletColumn] = (object?)cartonsPerPallet ?? DBNull.Value;
         table.Rows.Add(r);
         return isValid;
+    }
+
+    /// <summary>Row errors name the sheet row AND the product code, because the
+    /// user is looking at a 20 000-row spreadsheet:
+    /// <c>Row 2 (IMP000001): UOM 'XX' does not exist.</c>
+    /// rowNo counts DATA rows (import_errors.row_no keeps that meaning, the error
+    /// report matches on it); the message shows rowNo + 1 — the row number Excel
+    /// puts in the margin, header included.</summary>
+    private static ErrorRow Error(int rowNo, string? code, string column,
+        string errorCode, string message, string? rawValue) =>
+        new(rowNo, column, errorCode,
+            $"Row {rowNo + 1}{(string.IsNullOrEmpty(code) ? "" : $" ({code})")}: {message}",
+            rawValue);
+
+    private static void CheckLength(int rowNo, string? code, string column,
+        string? value, int max, List<ErrorRow> errors)
+    {
+        if (value is not null && value.Length > max)
+        {
+            errors.Add(Error(rowNo, code, column, "TOO_LONG",
+                $"{column} exceeds {max} characters.", value));
+        }
     }
 
     // ---- [5] cross-row validation, set-based ---------------------------------
@@ -311,7 +337,8 @@ public sealed class ImportPipeline(
             """
             INSERT INTO import_errors (batch_id, row_no, column_name, error_code, message, raw_value)
             SELECT s.batch_id, s.row_no, 'Code', 'DUPLICATE_IN_FILE',
-                   'This code appears more than once in the file.', s.c_code
+                   CONCAT('Row ', s.row_no + 1, ' (', COALESCE(s.c_code, ''), '): ',
+                          'This code appears more than once in the file.'), s.c_code
             FROM product_import_staging s
             JOIN (SELECT c_code FROM product_import_staging
                   WHERE batch_id = @batchId AND is_valid = 1
@@ -375,18 +402,19 @@ public sealed class ImportPipeline(
         // THE set-based upsert — the literal answer to "no row-by-row inserts".
         // F-3 (documented): import wins over a concurrent manual edit;
         // updated_by records the importer and the audit row makes it traceable.
+        // category_id, default_production_date and default_expiry_date are NOT in
+        // the column list: they are outside the import contract, so an import must
+        // leave whatever the product already holds alone rather than null it.
         await using (var tx = await conn.BeginTransactionAsync(ct))
         {
             await conn.ExecuteAsync(new CommandDefinition(
                 """
                 INSERT INTO products
-                    (code, description, uom_id, size, color, category_id,
-                     default_batch, default_production_date, default_expiry_date,
-                     default_quantity, carton_quantity,
+                    (code, description, uom_id, size, color,
+                     default_batch, default_quantity, carton_quantity, cartons_per_pallet,
                      is_active, concurrency_stamp, created_at, created_by)
-                SELECT c_code, c_description, n_uom_id, c_size, c_color, n_category_id,
-                       c_batch, n_production_date, n_expiry_date,
-                       n_quantity, n_carton_qty,
+                SELECT c_code, c_description, n_uom_id, c_size, c_color,
+                       c_batch, n_quantity, n_carton_qty, n_cartons_per_pallet,
                        1, UUID(), UTC_TIMESTAMP(3), @UploadedBy
                 FROM product_import_staging
                 WHERE batch_id = @Id AND is_valid = 1
@@ -395,12 +423,10 @@ public sealed class ImportPipeline(
                     uom_id                  = VALUES(uom_id),
                     size                    = VALUES(size),
                     color                   = VALUES(color),
-                    category_id             = VALUES(category_id),
                     default_batch           = VALUES(default_batch),
-                    default_production_date = VALUES(default_production_date),
-                    default_expiry_date     = VALUES(default_expiry_date),
                     default_quantity        = VALUES(default_quantity),
                     carton_quantity         = VALUES(carton_quantity),
+                    cartons_per_pallet      = VALUES(cartons_per_pallet),
                     concurrency_stamp       = UUID(),
                     updated_at              = UTC_TIMESTAMP(3),
                     updated_by              = @UploadedBy
@@ -426,10 +452,7 @@ public sealed class ImportPipeline(
         var uoms = (await conn.QueryAsync<(string Code, long Id)>(new CommandDefinition(
                 "SELECT code, CAST(id AS SIGNED) FROM uoms WHERE is_active = 1", cancellationToken: ct)))
             .ToDictionary(x => x.Code, x => x.Id, StringComparer.OrdinalIgnoreCase);
-        var cats = (await conn.QueryAsync<(string Name, long Id)>(new CommandDefinition(
-                "SELECT name, CAST(id AS SIGNED) FROM product_categories WHERE is_active = 1", cancellationToken: ct)))
-            .ToDictionary(x => x.Name, x => x.Id, StringComparer.OrdinalIgnoreCase);
-        return new Lookups(uoms, cats, string.Join(", ", uoms.Keys.Order()));
+        return new Lookups(uoms, string.Join(", ", uoms.Keys.Order()));
     }
 
     private static async Task<bool> IsCancelledAsync(MySqlConnection conn, long batchId, CancellationToken ct) =>
@@ -459,6 +482,10 @@ public sealed class ImportPipeline(
             FROM import_batches WHERE id = @batchId
             """, new { batchId }, cancellationToken: ct)) ?? "{}";
 
+    /// <summary>Only the contract columns are supplied. The dropped staging
+    /// columns (c_category, c_production_date, c_expiry_date, n_production_date,
+    /// n_expiry_date) are all NULL-able in 0005_import.sql, so the bulk copy's
+    /// explicit column list simply leaves them at NULL — nothing to write.</summary>
     private static DataTable BuildChunkTable()
     {
         var t = new DataTable();
@@ -470,18 +497,13 @@ public sealed class ImportPipeline(
         t.Columns.Add("c_size", typeof(string));
         t.Columns.Add("c_color", typeof(string));
         t.Columns.Add("c_batch", typeof(string));
-        t.Columns.Add("c_production_date", typeof(string));
-        t.Columns.Add("c_expiry_date", typeof(string));
         t.Columns.Add("c_quantity", typeof(string));
         t.Columns.Add("c_carton_qty", typeof(string));
-        t.Columns.Add("c_category", typeof(string));
         t.Columns.Add("is_valid", typeof(bool));
-        t.Columns.Add("n_production_date", typeof(DateTime));
-        t.Columns.Add("n_expiry_date", typeof(DateTime));
         t.Columns.Add("n_quantity", typeof(decimal));
         t.Columns.Add("n_carton_qty", typeof(decimal));
         t.Columns.Add("n_uom_id", typeof(long));
-        t.Columns.Add("n_category_id", typeof(long));
+        t.Columns.Add(CartonsPerPalletColumn, typeof(int));   // Cartons per Pallet
         return t;
     }
 
@@ -508,31 +530,8 @@ public sealed class ImportPipeline(
         return string.IsNullOrEmpty(s) ? null : s;
     }
 
-    private static DateTime? ParseDate(IReadOnlyDictionary<string, object?> row, string key,
-        int rowNo, string column, List<ErrorRow> errors)
-    {
-        if (!row.TryGetValue(key, out var value) || value is null ||
-            (value is string blank && string.IsNullOrWhiteSpace(blank)))
-        {
-            return null;
-        }
-        if (value is DateTime dt)
-        {
-            return dt.Date;
-        }
-        var s = value.ToString()!.Trim();
-        if (DateTime.TryParseExact(s, DateFormats, CultureInfo.InvariantCulture,
-                DateTimeStyles.None, out var parsed))
-        {
-            return parsed.Date;
-        }
-        errors.Add(new(rowNo, column, "BAD_DATE",
-            $"'{s}' is not a valid date. Use dd/MM/yyyy.", s));
-        return null;
-    }
-
     private static decimal? ParseDecimal(IReadOnlyDictionary<string, object?> row, string key,
-        int rowNo, string column, List<ErrorRow> errors)
+        int rowNo, string? code, string column, List<ErrorRow> errors)
     {
         if (!row.TryGetValue(key, out var value) || value is null ||
             (value is string blank && string.IsNullOrWhiteSpace(blank)))
@@ -549,15 +548,42 @@ public sealed class ImportPipeline(
         switch (parsed)
         {
             case null:
-                errors.Add(new(rowNo, column, "BAD_NUMBER",
+                errors.Add(Error(rowNo, code, column, "BAD_NUMBER",
                     $"'{value}' is not a valid number.", value.ToString()));
                 return null;
             case < 0:
-                errors.Add(new(rowNo, column, "NEGATIVE", "Value cannot be negative.", value.ToString()));
+                errors.Add(Error(rowNo, code, column, "NEGATIVE",
+                    "Value cannot be negative.", value.ToString()));
                 return null;
             default:
                 return parsed;
         }
+    }
+
+    /// <summary>Cartons per Pallet is products.cartons_per_pallet INT NULL:
+    /// optional, whole, non-negative. "40.0" from a spreadsheet is a 40.</summary>
+    private static int? ParseInt(IReadOnlyDictionary<string, object?> row, string key,
+        int rowNo, string? code, string column, List<ErrorRow> errors)
+    {
+        var before = errors.Count;
+        var parsed = ParseDecimal(row, key, rowNo, code, column, errors);
+        if (parsed is not { } value)
+        {
+            return null;
+        }
+        if (decimal.Truncate(value) != value)
+        {
+            errors.Add(Error(rowNo, code, column, "NOT_WHOLE",
+                $"'{value}' must be a whole number.", value.ToString(CultureInfo.InvariantCulture)));
+            return null;
+        }
+        if (value > int.MaxValue)
+        {
+            errors.Add(Error(rowNo, code, column, "OUT_OF_RANGE",
+                $"'{value}' is too large.", value.ToString(CultureInfo.InvariantCulture)));
+            return null;
+        }
+        return errors.Count == before ? (int)value : null;
     }
 
     private static string? Truncate(string? s, int max) =>
@@ -565,6 +591,5 @@ public sealed class ImportPipeline(
 
     private sealed record BatchRow(long Id, string StoredPath, long UploadedBy, string CommitPolicy, string UploadedByUsername);
     private sealed record ErrorRow(int RowNo, string Column, string Code, string Message, string? RawValue);
-    private sealed record Lookups(
-        Dictionary<string, long> Uoms, Dictionary<string, long> Categories, string UomList);
+    private sealed record Lookups(Dictionary<string, long> Uoms, string UomList);
 }

@@ -31,26 +31,33 @@ public static class ImportEndpoints
             {
                 var userId = long.Parse(user.FindFirstValue(AppClaimTypes.UserId)!);
 
+                // DomainException so the middleware envelope carries code +
+                // correlation id — hand-rolled Results.Problem drops both.
                 var maxMb = await settings.GetIntAsync("Import:MaxUploadMb", 100, ct);
                 if (file.Length == 0 || file.Length > maxMb * 1024L * 1024L)
                 {
-                    return Results.Problem(statusCode: 400, title: ErrorCodes.ValidationFailed,
-                        detail: $"The file must be between 1 byte and {maxMb} MB.");
+                    throw new BarcodePrinter.Domain.DomainException(ErrorCodes.ValidationFailed,
+                        $"The file must be between 1 byte and {maxMb} MB.");
                 }
                 if (!Path.GetExtension(file.FileName).Equals(".xlsx", StringComparison.OrdinalIgnoreCase))
                 {
-                    return Results.Problem(statusCode: 400, title: ErrorCodes.ValidationFailed,
-                        detail: "Only .xlsx files are supported. Download the template to get started.");
+                    throw new BarcodePrinter.Domain.DomainException(ErrorCodes.ValidationFailed,
+                        "Only .xlsx files are supported. Download the template to get started.");
                 }
                 // One running import per user (§15 guard rails).
                 if (await query.HasRunningAsync(userId, ct))
                 {
-                    return Results.Problem(statusCode: 400, title: ErrorCodes.ValidationFailed,
-                        detail: "You already have an import in progress. Wait for it to finish.");
+                    throw new BarcodePrinter.Domain.DomainException(ErrorCodes.ValidationFailed,
+                        "You already have an import in progress. Wait for it to finish.");
                 }
 
-                var importsDir = configuration["Imports:RootPath"]
-                    ?? Path.Combine(AppContext.BaseDirectory, "data", "imports");
+                var importsDir = configuration["Imports:RootPath"] ?? configuration["Storage:ImportPath"];
+                if (string.IsNullOrWhiteSpace(importsDir))
+                {
+                    importsDir = OperatingSystem.IsWindows()
+                        ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "BarcodePrinter", "imports")
+                        : Path.Combine(AppContext.BaseDirectory, "data", "imports");
+                }
                 Directory.CreateDirectory(importsDir);
 
                 var policy = await settings.GetAsync("Import:CommitPolicy", ct) ?? "AllOrNothing";

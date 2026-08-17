@@ -29,7 +29,10 @@ public class ImportApiTests(ApiFixture fx) : IAsyncLifetime
             new AuthenticationHeaderValue("Bearer", login.AccessToken);
     }
 
-    public Task DisposeAsync() => Task.CompletedTask;
+    public async Task DisposeAsync()
+    {
+        await SetCommitPolicyAsync("AllOrNothing");
+    }
 
     // ---- THE phase-4 exit criterion -----------------------------------------
 
@@ -147,8 +150,10 @@ public class ImportApiTests(ApiFixture fx) : IAsyncLifetime
         {
             ["Code"] = null, ["Description"] = null, ["UOM"] = null,
             ["Size"] = null, ["Color"] = null, ["Batch"] = null,
+            ["Quantity"] = null, ["Carton Quantity"] = null,
+            ["Cartons per Pallet"] = null,
             ["Production Date"] = null, ["Expiry Date"] = null,
-            ["Quantity"] = null, ["Carton Quantity"] = null, ["Category"] = null,
+            ["Category"] = null, ["Barcode"] = null,
         }));
 
         var batch = await UploadAndAwaitAsync(MakeWorkbook(rows), "phantom.xlsx");
@@ -157,6 +162,153 @@ public class ImportApiTests(ApiFixture fx) : IAsyncLifetime
         batch.TotalRows.Should().Be(5, "empty phantom rows are not data and not errors");
         batch.InsertedRows.Should().Be(5);
         batch.InvalidRows.Should().Be(0);
+    }
+
+    // ---- The import contract: extra columns are IGNORED, never rejected ---------
+
+    [Fact]
+    public async Task A_file_with_a_category_column_imports_instead_of_failing_every_row()
+    {
+        // The regression that started this: product_categories is never populated,
+        // so a customer file carrying "GENERAL" in every row produced one error
+        // per row and, under AllOrNothing, imported nothing at all.
+        var rows = Enumerable.Range(1, 25).Select(i => Row(
+            $"IMP-CAT-{i:00}", $"Widget {i}", "PCS", category: "GENERAL")).ToList();
+
+        var batch = await UploadAndAwaitAsync(MakeWorkbook(rows), "with-category.xlsx");
+
+        batch.Status.Should().Be("Completed", $"error: {batch.ErrorMessage}");
+        batch.InvalidRows.Should().Be(0, "Category is not part of the import contract");
+        batch.InsertedRows.Should().Be(25);
+
+        // Ignored means IGNORED: nothing was written to category_id.
+        (await ScalarAsync(
+            "SELECT COUNT(*) FROM products WHERE code LIKE 'IMP-CAT-%' AND category_id IS NOT NULL"))
+            .Should().Be(0L);
+    }
+
+    [Fact]
+    public async Task Legacy_columns_import_cleanly_even_when_their_values_are_nonsense()
+    {
+        // Category / Production Date / Expiry Date / Barcode are never parsed, so
+        // even values that could never validate cannot invalidate a row.
+        var rows = Enumerable.Range(1, 10).Select(i =>
+        {
+            var row = Row($"IMP-LEG-{i:00}", $"Legacy widget {i}", "PCS",
+                prodDate: "31/31/2026", category: "NO-SUCH-CATEGORY", barcode: "not-a-barcode");
+            row["Expiry Date"] = "yesterday";
+            return row;
+        }).ToList();
+
+        var batch = await UploadAndAwaitAsync(MakeWorkbook(rows), "legacy-columns.xlsx");
+
+        batch.Status.Should().Be("Completed", $"error: {batch.ErrorMessage}");
+        batch.InvalidRows.Should().Be(0);
+        batch.InsertedRows.Should().Be(10);
+        (await ScalarAsync(
+            """
+            SELECT COUNT(*) FROM products
+            WHERE code LIKE 'IMP-LEG-%'
+              AND (category_id IS NOT NULL
+                   OR default_production_date IS NOT NULL
+                   OR default_expiry_date IS NOT NULL)
+            """)).Should().Be(0L, "none of those columns is written by the importer");
+    }
+
+    [Fact]
+    public async Task Reimport_leaves_fields_outside_the_contract_untouched()
+    {
+        const string code = "IMP-KEEP-01";
+        (await UploadAndAwaitAsync(MakeWorkbook([Row(code, "Original", "PCS")]), "keep-1.xlsx"))
+            .Status.Should().Be("Completed");
+
+        // Values set OUTSIDE the import (category by an admin, dates by a print run).
+        await ExecuteAsync(
+            """
+            INSERT INTO product_categories (code, name, is_active) VALUES ('KEEPCAT', 'Keep me', 1)
+            ON DUPLICATE KEY UPDATE name = VALUES(name);
+            """);
+        await ExecuteAsync(
+            $"""
+            UPDATE products
+            SET category_id = (SELECT id FROM product_categories WHERE code = 'KEEPCAT'),
+                default_production_date = '2020-01-01',
+                default_expiry_date     = '2030-01-01'
+            WHERE code = '{code}';
+            """);
+
+        var second = await UploadAndAwaitAsync(MakeWorkbook(
+            [Row(code, "Renamed", "PCS", prodDate: "01/01/1999", category: "SOMETHING ELSE")]), "keep-2.xlsx");
+        second.Status.Should().Be("Completed");
+        second.UpdatedRows.Should().Be(1);
+
+        (await ScalarAsync($"SELECT description FROM products WHERE code = '{code}'"))
+            .Should().Be("Renamed", "columns inside the contract ARE updated");
+        (await ScalarAsync($"SELECT category_id FROM products WHERE code = '{code}'"))
+            .Should().NotBeNull("the importer must not null a value it does not own");
+        (await ScalarAsync($"SELECT default_production_date FROM products WHERE code = '{code}'"))
+            .Should().Be(new DateTime(2020, 1, 1));
+        (await ScalarAsync($"SELECT default_expiry_date FROM products WHERE code = '{code}'"))
+            .Should().Be(new DateTime(2030, 1, 1));
+    }
+
+    [Fact]
+    public async Task A_file_with_only_the_contract_columns_imports()
+    {
+        // Exactly the generated template's headers — nothing else.
+        var rows = Enumerable.Range(1, 5).Select(i => new Dictionary<string, object?>
+        {
+            ["Code"] = $"IMP-MIN-{i:00}",
+            ["Description"] = $"Minimal widget {i}",
+            ["UOM"] = "PCS",
+            ["Size"] = "M2",
+            ["Color"] = "NATURAL",
+            ["Batch"] = "CONE",
+            ["Quantity"] = 750,
+            ["Carton Quantity"] = 750,
+            ["Cartons per Pallet"] = 40,
+        }).ToList();
+
+        var batch = await UploadAndAwaitAsync(MakeWorkbook(rows), "minimal.xlsx");
+
+        batch.Status.Should().Be("Completed", $"error: {batch.ErrorMessage}");
+        batch.InvalidRows.Should().Be(0);
+        batch.InsertedRows.Should().Be(5);
+    }
+
+    [Fact]
+    public async Task Cartons_per_pallet_round_trips()
+    {
+        const string code = "IMP-CPP-01";
+        var batch = await UploadAndAwaitAsync(MakeWorkbook(
+            [Row(code, "Pallet widget", "PCS", cartonsPerPallet: 42)]), "cpp.xlsx");
+        batch.Status.Should().Be("Completed", $"error: {batch.ErrorMessage}");
+
+        (await ScalarAsync($"SELECT cartons_per_pallet FROM products WHERE code = '{code}'"))
+            .Should().Be(42);
+
+        // ...and the export carries it back out, so an export re-imports intact.
+        var export = await _admin.GetAsync(ApiRoutes.Products.Export);
+        export.StatusCode.Should().Be(HttpStatusCode.OK);
+        using var ms = new MemoryStream(await export.Content.ReadAsByteArrayAsync());
+        MiniExcel.Query(ms, useHeaderRow: false).Cast<IDictionary<string, object?>>()
+            .SelectMany(r => r.Values).Should().Contain(v => (v as string) == "Cartons per Pallet");
+    }
+
+    [Fact]
+    public async Task Unknown_uom_error_names_the_row_and_the_product_code()
+    {
+        const string code = "IMP-UOMERR-01";
+        var batch = await UploadAndAwaitAsync(MakeWorkbook(
+            [Row(code, "Bad unit", "NOT-A-UOM")]), "bad-uom.xlsx");
+
+        batch.InvalidRows.Should().Be(1);
+        var message = (string?)await ScalarAsync(
+            $"SELECT message FROM import_errors WHERE batch_id = {batch.Id} ORDER BY id LIMIT 1");
+
+        // "Row 2" — the first DATA row is row 2 in the user's spreadsheet.
+        // (The message then lists the valid UOMs, which other tests may add to.)
+        message.Should().StartWith($"Row 2 ({code}): UOM 'NOT-A-UOM' does not exist. Valid values: ");
     }
 
     // ---- Error report -----------------------------------------------------------
@@ -168,7 +320,7 @@ public class ImportApiTests(ApiFixture fx) : IAsyncLifetime
         {
             Row("IMP-ERR-01", "Good row", "PCS"),
             Row("", "No code", "PCS"),
-            Row("IMP-ERR-03", "Bad date", "PCS", prodDate: "31/31/2026"),
+            Row("IMP-ERR-03", "Bad UOM", "NOT-A-UOM"),
         };
         var batch = await UploadAndAwaitAsync(MakeWorkbook(rows), "errors.xlsx");
         batch.InvalidRows.Should().Be(2);
@@ -256,8 +408,15 @@ public class ImportApiTests(ApiFixture fx) : IAsyncLifetime
             .Remove("setting:Import:CommitPolicy");
     }
 
+    /// <summary>The shape of a REAL customer file: the nine contract columns
+    /// PLUS the columns that used to be part of the contract. Category,
+    /// Production Date and Expiry Date stay in this fixture deliberately —
+    /// customers hold files that carry them and those files must import cleanly,
+    /// with the extra columns ignored rather than rejected.</summary>
     private static Dictionary<string, object?> Row(
-        string code, string description, string uom, string? prodDate = "21/07/2026") => new()
+        string code, string description, string uom,
+        string? prodDate = "21/07/2026", object? cartonsPerPallet = null,
+        string? category = null, string? barcode = null) => new()
     {
         ["Code"] = code,
         ["Description"] = description,
@@ -265,12 +424,30 @@ public class ImportApiTests(ApiFixture fx) : IAsyncLifetime
         ["Size"] = "M2",
         ["Color"] = "NATURAL",
         ["Batch"] = "CONE",
-        ["Production Date"] = prodDate,
-        ["Expiry Date"] = "21/07/2027",
         ["Quantity"] = 750,
         ["Carton Quantity"] = 750,
-        ["Category"] = null,
+        ["Cartons per Pallet"] = cartonsPerPallet,
+        // ---- outside the import contract: read by nobody -------------------
+        ["Production Date"] = prodDate,
+        ["Expiry Date"] = "21/07/2027",
+        ["Category"] = category,
+        ["Barcode"] = barcode,
     };
+
+    private async Task<object?> ScalarAsync(string sql)
+    {
+        await using var conn = await fx.OpenDbAsync();
+        await using var cmd = new MySqlConnector.MySqlCommand(sql, conn);
+        var value = await cmd.ExecuteScalarAsync();
+        return value is DBNull ? null : value;
+    }
+
+    private async Task ExecuteAsync(string sql)
+    {
+        await using var conn = await fx.OpenDbAsync();
+        await using var cmd = new MySqlConnector.MySqlCommand(sql, conn);
+        await cmd.ExecuteNonQueryAsync();
+    }
 
     private static byte[] MakeWorkbook(IEnumerable<Dictionary<string, object?>> rows)
     {

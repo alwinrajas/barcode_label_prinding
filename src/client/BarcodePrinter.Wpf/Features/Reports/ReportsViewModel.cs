@@ -3,6 +3,7 @@ using System.IO;
 using BarcodePrinter.Client.Core;
 using BarcodePrinter.Contracts;
 using BarcodePrinter.Contracts.Reports;
+using BarcodePrinter.Wpf.Services;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 
@@ -51,8 +52,10 @@ public sealed partial class ReportsViewModel : ObservableObject
     [ObservableProperty] private string searchText = "";
     [ObservableProperty] private bool isBusy;
     [ObservableProperty] private bool hasMore;
+    [ObservableProperty] private bool isEmpty;
     [ObservableProperty] private string? errorMessage;
-    [ObservableProperty] private string? statusMessage;
+    [ObservableProperty] private string? errorReference;
+    [ObservableProperty] private string? countText;
     [ObservableProperty] private string title = "Reports";
     [ObservableProperty] private bool isDetailReport = true;
     [ObservableProperty] private ReportTotals? totals;
@@ -82,6 +85,7 @@ public sealed partial class ReportsViewModel : ObservableObject
 
         IsBusy = true;
         ErrorMessage = null;
+        ErrorReference = null;
         try
         {
             var result = await _api.RunAsync(type, from, to, SearchText,
@@ -102,15 +106,21 @@ public sealed partial class ReportsViewModel : ObservableObject
             Totals = result.Totals;
             _nextCursor = result.NextCursor;
             HasMore = result.HasMore;
-            StatusMessage = Rows.Count == 0 ? "No printing activity in this period." : null;
+            IsEmpty = Rows.Count == 0;
+            CountText = Rows.Count == 0 ? null
+                : HasMore ? $"Showing the first {Rows.Count:N0} rows"
+                : $"{Rows.Count:N0} row{(Rows.Count == 1 ? "" : "s")}";
         }
         catch (ApiException ex)
         {
             ErrorMessage = ex.Message;
+            ErrorReference = ex.CorrelationId;
+            IsEmpty = false;
         }
         catch (ApiUnreachableException)
         {
             ErrorMessage = "Cannot reach the server. Check your network connection.";
+            IsEmpty = false;
         }
         finally
         {
@@ -138,15 +148,15 @@ public sealed partial class ReportsViewModel : ObservableObject
             var (from, to) = Range();
             var bytes = await _api.ExportAsync(type, from, to, SearchText, CancellationToken.None);
             await File.WriteAllBytesAsync(dialog.FileName, bytes!);
-            StatusMessage = "Report exported.";
+            ToastService.Instance.Success("Report exported.");
         }
         catch (ApiException ex)
         {
-            ErrorMessage = ex.Message;
+            ToastService.Instance.Error(ex.Message, ex.CorrelationId);
         }
         catch (ApiUnreachableException)
         {
-            ErrorMessage = "Cannot reach the server. Check your network connection.";
+            ToastService.Instance.Error("Cannot reach the server. Check your network connection.");
         }
         finally
         {
@@ -169,7 +179,7 @@ public sealed partial class ReportsViewModel : ObservableObject
     {
         if (Rows.Count == 0)
         {
-            StatusMessage = "There is nothing to print for this period.";
+            ToastService.Instance.Info("There is nothing to print for this period.");
             return;
         }
 
@@ -201,12 +211,12 @@ public sealed partial class ReportsViewModel : ObservableObject
             dialog.PrintDocument(
                 ((System.Windows.Documents.IDocumentPaginatorSource)document).DocumentPaginator,
                 Title);
-            StatusMessage = "Report sent to the printer.";
+            ToastService.Instance.Success("Report sent to the printer.");
         }
         catch (Exception ex)
         {
             // A printer problem must not take the reports screen down with it.
-            ErrorMessage = $"Could not print the report: {ex.Message}";
+            ToastService.Instance.Error($"Could not print the report: {ex.Message}");
         }
     }
 }

@@ -59,6 +59,7 @@ public static class ApiRoutes
         public static string ById(long id) => $"/api/printers/{id}";
         public static string SetDefault(long id) => $"/api/printers/{id}/default";
         public static string Test(long id) => $"/api/printers/{id}/test";
+        public static string Status(long id) => $"/api/printers/{id}/status";
     }
 
     public static class Print

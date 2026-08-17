@@ -16,6 +16,15 @@ public interface IProductRepository
     Task AddAsync(Product product, CancellationToken ct);
     Task AddImageAsync(ProductImage image, CancellationToken ct);
     Task<bool> SaveChangesDetectingConflictAsync(CancellationToken ct);
+
+    /// <summary>Runs <paramref name="action"/> inside one database transaction
+    /// so multi-save use cases (image row + primary pointer) commit or roll
+    /// back together instead of half-applying on a crash.</summary>
+    Task RunInTransactionAsync(Func<Task> action, CancellationToken ct);
+
+    /// <summary>Case-insensitive find-or-create of a UOM by code (§10 free-text
+    /// UOM entry) — the FK survives, so import validation keeps working.</summary>
+    Task<long> GetOrCreateUomAsync(string code, CancellationToken ct);
 }
 
 public sealed class ProductService(
@@ -27,6 +36,7 @@ public sealed class ProductService(
     public async Task<long> CreateAsync(SaveProductRequest request, ActorInfo actor, CancellationToken ct)
     {
         Validate(request);
+        request = await WithResolvedUomAsync(request, ct);
 
         if (await products.FindByCodeAsync(request.Code.Trim(), ct) is not null)
         {
@@ -58,6 +68,7 @@ public sealed class ProductService(
     public async Task UpdateAsync(long id, SaveProductRequest request, ActorInfo actor, CancellationToken ct)
     {
         Validate(request);
+        request = await WithResolvedUomAsync(request, ct);
 
         var product = await products.FindByIdAsync(id, ct)
             ?? throw new NotFoundException("Product", id);
@@ -142,25 +153,30 @@ public sealed class ProductService(
         };
 
         // Same content re-uploaded → reuse the existing row (uq_img_hash).
+        // Both saves run in one transaction: a crash between materialising the
+        // image row and pointing primary_image_id at it must not orphan the row.
         var existing = product.Images.FirstOrDefault(i => i.ContentHash == stored.ContentHash);
-        if (existing is null)
+        await products.RunInTransactionAsync(async () =>
         {
-            await products.AddImageAsync(image, ct);
-            await products.SaveChangesDetectingConflictAsync(ct);   // materialise image.Id
-            product.PrimaryImageId = image.Id;
-        }
-        else
-        {
-            product.PrimaryImageId = existing.Id;
-        }
-        foreach (var other in product.Images.Where(i => i.Id != product.PrimaryImageId))
-        {
-            other.IsPrimary = false;
-        }
+            if (existing is null)
+            {
+                await products.AddImageAsync(image, ct);
+                await products.SaveChangesDetectingConflictAsync(ct);   // materialise image.Id
+                product.PrimaryImageId = image.Id;
+            }
+            else
+            {
+                product.PrimaryImageId = existing.Id;
+            }
+            foreach (var other in product.Images.Where(i => i.Id != product.PrimaryImageId))
+            {
+                other.IsPrimary = false;
+            }
 
-        product.UpdatedAt = clock.GetUtcNow().UtcDateTime;
-        product.UpdatedBy = actor.UserId;
-        await products.SaveChangesDetectingConflictAsync(ct);
+            product.UpdatedAt = clock.GetUtcNow().UtcDateTime;
+            product.UpdatedBy = actor.UserId;
+            await products.SaveChangesDetectingConflictAsync(ct);
+        }, ct);
 
         await audit.WriteAsync(new AuditEntry("ProductImageChanged",
             UserId: actor.UserId, UsernameSnapshot: actor.Username,
@@ -181,32 +197,52 @@ public sealed class ProductService(
         {
             throw new DomainException(ErrorCodes.ValidationFailed, "Description is required (max 255 characters).");
         }
-        if (r.DefaultExpiryDate is { } exp && r.DefaultProductionDate is { } prod && exp < prod)
-        {
-            throw new DomainException(ErrorCodes.ValidationFailed, "Expiry date cannot be before production date.");
-        }
+        // No production/expiry ordering rule here any more: those dates belong
+        // to a print run, and PrintJobService still enforces the same rule on
+        // the values the operator actually enters.
         if (r.DefaultQuantity is < 0 || r.CartonQuantity is < 0 || r.CartonsPerPallet is < 0)
         {
             throw new DomainException(ErrorCodes.ValidationFailed, "Quantities cannot be negative.");
         }
     }
 
+    /// <summary>
+    /// Copies the editable master fields onto the entity. BarcodeValue,
+    /// CategoryId, DefaultProductionDate and DefaultExpiryDate are pointedly
+    /// NOT assigned: they left the contract, and writing null over them here
+    /// would erase values that existing installations already hold. The label
+    /// still falls back to the code for the barcode, and the print screen
+    /// supplies its own dates.
+    /// </summary>
     private static void Apply(Product p, SaveProductRequest r)
     {
         p.Code = r.Code.Trim();
         p.Description = r.Description.Trim();
-        p.BarcodeValue = Trimmed(r.BarcodeValue);
         p.UomId = r.UomId;
         p.Size = Trimmed(r.Size);
         p.Color = Trimmed(r.Color);
-        p.CategoryId = r.CategoryId;
         p.DefaultBatch = Trimmed(r.DefaultBatch);
-        p.DefaultProductionDate = r.DefaultProductionDate;
-        p.DefaultExpiryDate = r.DefaultExpiryDate;
         p.DefaultQuantity = r.DefaultQuantity;
         p.DefaultQuantityText = Trimmed(r.DefaultQuantityText);
         p.CartonQuantity = r.CartonQuantity;
         p.CartonsPerPallet = r.CartonsPerPallet;
+    }
+
+    /// <summary>Free-text UOM (§10): a typed code that matches nothing becomes
+    /// a new UOM row. An explicit UomId always wins.</summary>
+    private async Task<SaveProductRequest> WithResolvedUomAsync(
+        SaveProductRequest r, CancellationToken ct)
+    {
+        if (r.UomId is not null || string.IsNullOrWhiteSpace(r.UomCode))
+        {
+            return r;
+        }
+        var code = r.UomCode.Trim().ToUpperInvariant();
+        if (code.Length > 16)
+        {
+            throw new DomainException(ErrorCodes.ValidationFailed, "UOM must be 16 characters or fewer.");
+        }
+        return r with { UomId = await products.GetOrCreateUomAsync(code, ct) };
     }
 
     private static string? Trimmed(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();

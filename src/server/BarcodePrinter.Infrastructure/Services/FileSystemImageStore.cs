@@ -27,10 +27,28 @@ public sealed class FileSystemImageStore : IProductImageStore
 
     public FileSystemImageStore(IConfiguration configuration)
     {
-        _root = configuration["Images:RootPath"]
-            ?? Path.Combine(AppContext.BaseDirectory, "data", "images");
+        var configuredPath = configuration["Images:RootPath"] ?? configuration["Storage:ImagePath"];
+        if (!string.IsNullOrWhiteSpace(configuredPath))
+        {
+            _root = configuredPath;
+        }
+        else if (OperatingSystem.IsWindows())
+        {
+            _root = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+                "BarcodePrinter", "images");
+        }
+        else
+        {
+            _root = Path.Combine(AppContext.BaseDirectory, "data", "images");
+        }
         Directory.CreateDirectory(_root);
     }
+
+    /// <summary>Pixel-dimension ceiling checked BEFORE full decode — a small
+    /// compressed file can decode to a multi-gigabyte bitmap (decompression
+    /// bomb); the header tells us the dimensions without paying for the pixels.</summary>
+    private const int MaxPixelEdge = 12_000;
 
     public async Task<StoredImage> SaveAsync(Stream content, CancellationToken ct)
     {
@@ -39,11 +57,30 @@ public sealed class FileSystemImageStore : IProductImageStore
         await content.CopyToAsync(buffer, ct);
         buffer.Position = 0;
 
-        using var original = SKBitmap.Decode(buffer);
+        using var codec = SKCodec.Create(buffer);
+        if (codec is null)
+        {
+            throw new Domain.DomainException("IMAGE_INVALID",
+                "The file is not a readable image. Use JPEG, PNG or WebP.");
+        }
+        var info = codec.Info;
+        if (info.Width > MaxPixelEdge || info.Height > MaxPixelEdge)
+        {
+            throw new Domain.DomainException("IMAGE_TOO_LARGE",
+                $"The image is {info.Width}×{info.Height} pixels — the maximum is " +
+                $"{MaxPixelEdge}×{MaxPixelEdge}. Resize the image and try again.");
+        }
+        if (info.Width < 1 || info.Height < 1)
+        {
+            throw new Domain.DomainException("IMAGE_INVALID",
+                "The file is not a readable image. Use JPEG, PNG or WebP.");
+        }
+
+        using var original = SKBitmap.Decode(codec);
         if (original is null)
         {
             throw new Domain.DomainException("IMAGE_INVALID",
-                "The file is not a readable image. Use JPEG or PNG.");
+                "The file is not a readable image. Use JPEG, PNG or WebP.");
         }
 
         using var full = Resize(original, FullMaxEdge);
@@ -61,9 +98,15 @@ public sealed class FileSystemImageStore : IProductImageStore
 
         var fullPath = Path.Combine(dir, $"{hash}.jpg");
         var thumbPath = Path.Combine(dir, $"{hash}_thumb.jpg");
+        // Checked independently so a crash between the two writes self-heals on
+        // the next upload of the same content instead of leaving a permanently
+        // thumbnail-less image.
         if (!File.Exists(fullPath))
         {
             await File.WriteAllBytesAsync(fullPath, fullBytes, ct);
+        }
+        if (!File.Exists(thumbPath))
+        {
             await File.WriteAllBytesAsync(thumbPath, thumbData.ToArray(), ct);
         }
 

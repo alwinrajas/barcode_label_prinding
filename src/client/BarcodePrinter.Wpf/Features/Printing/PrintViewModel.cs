@@ -4,17 +4,21 @@ using BarcodePrinter.Client.Core;
 using BarcodePrinter.Contracts;
 using BarcodePrinter.Contracts.Printing;
 using BarcodePrinter.Contracts.Products;
-using BarcodePrinter.Contracts.Templates;
 using BarcodePrinter.Wpf.Features.Login;
+using BarcodePrinter.Wpf.Services;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 
 namespace BarcodePrinter.Wpf.Features.Printing;
 
 /// <summary>
-/// The operational screen (blueprint §12.4). One page, four numbered sections,
-/// keyboard-first: search → confirm run values → preview → print. Everything is
-/// async; the UI never blocks on the server or the printer.
+/// The operational screen (blueprint §12.4). One page, keyboard-first:
+/// search → confirm run values → preview → print. Everything is async; the UI
+/// never blocks on the server or the printer.
+///
+/// Operators do not pick templates (§15): the request is submitted with
+/// TemplateId = null and the server resolves product default → printer
+/// default → global default.
 /// </summary>
 public sealed partial class PrintViewModel : ObservableObject, IDisposable
 {
@@ -24,18 +28,44 @@ public sealed partial class PrintViewModel : ObservableObject, IDisposable
     private CancellationTokenSource _previewCts = new();
     private Microsoft.AspNetCore.SignalR.Client.HubConnection? _statusHub;
 
+    /// <summary>Re-checks the selected printer's reachability every 20s so
+    /// "Online" next to the combo is a live fact, not a login-time one.</summary>
+    private readonly System.Windows.Threading.DispatcherTimer _printerStatusTimer;
+
+    /// <summary>Monotonic guard: a slow status probe for a printer the operator
+    /// has already switched away from must not overwrite the newer answer.</summary>
+    private int _printerStatusGeneration;
+
+    /// <summary>True once the operator has typed an expiry date themselves.
+    /// While false, expiry is derived (production + 1 year) whenever the
+    /// production date changes; the first manual edit takes ownership and the
+    /// derivation stops. Reset on every product change.</summary>
+    private bool _expiryManuallyEdited;
+
+    /// <summary>Set while the VM itself writes the date fields (product
+    /// defaults, derivation) so those writes are not mistaken for operator
+    /// edits.</summary>
+    private bool _applyingDates;
+
     public PrintViewModel(PrintApi api, ProductsApi products, Session session)
     {
         _api = api;
         _products = products;
         CanPrint = session.Has(PermissionCodes.PrintExecute);
+
+        _printerStatusTimer = new System.Windows.Threading.DispatcherTimer
+        {
+            Interval = TimeSpan.FromSeconds(20),
+        };
+        _printerStatusTimer.Tick += (_, _) => _ = CheckPrinterStatusAsync();
+        _printerStatusTimer.Start();
+
         _ = InitializeAsync();
         _ = SubscribeToJobStatusAsync();
     }
 
     public ObservableCollection<ProductSummary> SearchResults { get; } = [];
     public ObservableCollection<PrinterDto> Printers { get; } = [];
-    public ObservableCollection<TemplateSummary> Templates { get; } = [];
     public ObservableCollection<PrintJobDto> RecentJobs { get; } = [];
 
     public bool CanPrint { get; }
@@ -60,14 +90,18 @@ public sealed partial class PrintViewModel : ObservableObject, IDisposable
 
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(PrintCommand))]
-    private TemplateSummary? selectedTemplate;
-
-    [ObservableProperty]
-    [NotifyCanExecuteChangedFor(nameof(PrintCommand))]
     private PrinterDto? selectedPrinter;
 
-    [ObservableProperty] private string? previewZpl;
+    /// <summary>"Online" / "Offline" / "Unknown" / "None" — drives the colour
+    /// of the status caption next to the printer combo.</summary>
+    [ObservableProperty] private string printerStatusKind = "None";
+    [ObservableProperty] private string? printerStatusText;
+
     [ObservableProperty] private bool isPreviewLoading;
+
+    /// <summary>Non-fatal server note about the rendered label (e.g. the
+    /// feedback QR is blank). Shown as an amber banner over the preview.</summary>
+    [ObservableProperty] private string? previewWarning;
 
     /// <summary>The rendered label. This is what an operator actually checks —
     /// a wrong batch or a truncated description is visible here and invisible
@@ -80,7 +114,15 @@ public sealed partial class PrintViewModel : ObservableObject, IDisposable
     [ObservableProperty] private string? previewUnavailable;
     [ObservableProperty] private string? errorMessage;
     [ObservableProperty] private string? successMessage;
-    [ObservableProperty] private bool isPrinting;
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(PrintCommand))]
+    private bool isPrinting;
+
+    // Initialization honesty: if printers cannot be loaded the screen says so
+    // and offers Retry, instead of a permanently dead Print button.
+    [ObservableProperty] private bool hasInitError;
+    [ObservableProperty] private string? initErrorMessage;
 
     /// <summary>Restated in words next to the inputs AND on the button: a
     /// mis-keyed carton range wastes media and mislabels cartons.</summary>
@@ -95,6 +137,48 @@ public sealed partial class PrintViewModel : ObservableObject, IDisposable
             var count = to - from + 1;
             var copiesEach = int.TryParse(Copies, out var c) && c > 1 ? $" × {c} copies" : "";
             return $"{count} label{(count == 1 ? "" : "s")}, cartons {from}–{to}{copiesEach}";
+        }
+    }
+
+    /// <summary>The Print button restates the commitment when it is ready.</summary>
+    public string PrintButtonText
+    {
+        get
+        {
+            if (SelectedProduct is not null && SelectedPrinter is not null &&
+                TryParseRange(out var from, out var to, out _))
+            {
+                var count = to - from + 1;
+                return $"Print {count} label{(count == 1 ? "" : "s")}";
+            }
+            return "Print";
+        }
+    }
+
+    /// <summary>Why the Print button is disabled, in words — surfaced as its
+    /// tooltip so a dead button is never a mystery. Null when printing is
+    /// possible.</summary>
+    public string? PrintDisabledReason
+    {
+        get
+        {
+            if (!CanPrint)
+            {
+                return "You do not have permission to print.";
+            }
+            if (SelectedProduct is null)
+            {
+                return "Select a product first.";
+            }
+            if (SelectedPrinter is null)
+            {
+                return "No printer selected.";
+            }
+            if (!TryParseRange(out _, out _, out var rangeError))
+            {
+                return rangeError;
+            }
+            return null;
         }
     }
 
@@ -119,6 +203,7 @@ public sealed partial class PrintViewModel : ObservableObject, IDisposable
 
     async partial void OnSelectedProductChanged(ProductSummary? value)
     {
+        NotifyPrintGateChanged();
         if (value is not null)
         {
             await LoadProductAsync(value.Id);
@@ -126,13 +211,41 @@ public sealed partial class PrintViewModel : ObservableObject, IDisposable
     }
 
     partial void OnBatchChanged(string? value) => AfterRunValueChanged();
-    partial void OnProductionDateChanged(DateTime? value) => AfterRunValueChanged();
-    partial void OnExpiryDateChanged(DateTime? value) => AfterRunValueChanged();
+
+    partial void OnProductionDateChanged(DateTime? value)
+    {
+        // Derive expiry from production only while the operator has not taken
+        // ownership of the expiry field; a manual expiry edit stops this.
+        if (!_applyingDates && !_expiryManuallyEdited)
+        {
+            _applyingDates = true;
+            ExpiryDate = value?.AddYears(1);
+            _applyingDates = false;
+        }
+        AfterRunValueChanged();
+    }
+
+    partial void OnExpiryDateChanged(DateTime? value)
+    {
+        if (!_applyingDates)
+        {
+            _expiryManuallyEdited = true;
+        }
+        AfterRunValueChanged();
+    }
+
     partial void OnQuantityTextChanged(string? value) => AfterRunValueChanged();
     partial void OnCartonFromChanged(string value) => AfterRangeChanged();
     partial void OnCartonToChanged(string value) => AfterRangeChanged();
     partial void OnCopiesChanged(string value) => OnPropertyChanged(nameof(RunSummary));
-    partial void OnSelectedTemplateChanged(TemplateSummary? value) => _ = DebouncedPreviewAsync();
+
+    partial void OnSelectedPrinterChanged(PrinterDto? value)
+    {
+        NotifyPrintGateChanged();
+        _ = CheckPrinterStatusAsync();
+        // The printer can change how the label renders (DPI, resolved template).
+        _ = DebouncedPreviewAsync();
+    }
 
     private void AfterRunValueChanged()
     {
@@ -143,27 +256,49 @@ public sealed partial class PrintViewModel : ObservableObject, IDisposable
     private void AfterRangeChanged()
     {
         OnPropertyChanged(nameof(RunSummary));
-        PrintCommand.NotifyCanExecuteChanged();
+        NotifyPrintGateChanged();
         _ = DebouncedPreviewAsync();
     }
 
+    /// <summary>Everything derived from "can we print right now".</summary>
+    private void NotifyPrintGateChanged()
+    {
+        OnPropertyChanged(nameof(PrintButtonText));
+        OnPropertyChanged(nameof(PrintDisabledReason));
+        PrintCommand.NotifyCanExecuteChanged();
+    }
+
+    [RelayCommand]
     private async Task InitializeAsync()
     {
-        await GuardAsync(async () =>
+        HasInitError = false;
+        InitErrorMessage = null;
+        try
         {
+            Printers.Clear();
             foreach (var printer in await _api.ListPrintersAsync(true, CancellationToken.None))
             {
                 Printers.Add(printer);
             }
-            SelectedPrinter = Printers.FirstOrDefault(p => p.IsDefault) ?? Printers.FirstOrDefault();
 
-            foreach (var template in (await _api.ListTemplatesAsync(CancellationToken.None))
-                     .Where(t => t.IsActive))
+            if (Printers.Count == 0)
             {
-                Templates.Add(template);
+                HasInitError = true;
+                InitErrorMessage = "No active printers are configured. " +
+                    "Ask an administrator to add one, then retry.";
             }
-            SelectedTemplate = Templates.FirstOrDefault(t => t.IsDefault) ?? Templates.FirstOrDefault();
-        });
+            else
+            {
+                SelectedPrinter = Printers.FirstOrDefault(p => p.IsDefault) ?? Printers[0];
+            }
+        }
+        catch (Exception ex)
+        {
+            HasInitError = true;
+            InitErrorMessage = Describe(ex);
+            System.Diagnostics.Debug.WriteLine($"PrintView initialization failed: {ex}");
+        }
+        NotifyPrintGateChanged();
         await RefreshRecentAsync();
     }
 
@@ -201,6 +336,9 @@ public sealed partial class PrintViewModel : ObservableObject, IDisposable
         }
     }
 
+    /// <summary>Escape closes the result list without losing the selection.</summary>
+    public void ClearSearchResults() => SearchResults.Clear();
+
     private async Task LoadProductAsync(long id)
     {
         await GuardAsync(async () =>
@@ -210,9 +348,19 @@ public sealed partial class PrintViewModel : ObservableObject, IDisposable
 
             // Pre-fill from the master; the operator may override (A-9).
             Batch = detail.DefaultBatch;
-            ProductionDate = detail.DefaultProductionDate?.ToDateTime(TimeOnly.MinValue);
-            ExpiryDate = detail.DefaultExpiryDate?.ToDateTime(TimeOnly.MinValue);
             QuantityText = detail.DefaultQuantityText;
+
+            // Date defaults: master value when the product has one, otherwise
+            // today / production + 1 year. A new product resets expiry
+            // ownership so derivation works again.
+            _expiryManuallyEdited = false;
+            _applyingDates = true;
+            var production = detail.DefaultProductionDate?.ToDateTime(TimeOnly.MinValue)
+                ?? DateTime.Today;
+            ProductionDate = production;
+            ExpiryDate = detail.DefaultExpiryDate?.ToDateTime(TimeOnly.MinValue)
+                ?? production.AddYears(1);
+            _applyingDates = false;
 
             OnPropertyChanged(nameof(OverrideNotice));
             await DebouncedPreviewAsync();
@@ -221,7 +369,7 @@ public sealed partial class PrintViewModel : ObservableObject, IDisposable
 
     private async Task DebouncedPreviewAsync()
     {
-        if (SelectedProduct is null || SelectedTemplate is null)
+        if (SelectedProduct is null)
         {
             return;
         }
@@ -233,16 +381,25 @@ public sealed partial class PrintViewModel : ObservableObject, IDisposable
         {
             await Task.Delay(300, ct);
             IsPreviewLoading = true;
-            TryParseRange(out var from, out var to, out _);
+            long? cartonNumber = null, cartonTotal = null;
+            if (TryParseRange(out var from, out var to, out _))
+            {
+                cartonNumber = from;
+                cartonTotal = to - from + 1;
+            }
+            // TemplateId null → the server resolves the effective template the
+            // same way it will at submit time, so the preview is honest.
             var preview = await _api.PreviewAsync(new PrintPreviewRequest(
-                SelectedProduct.Id, SelectedTemplate.Id, Batch,
+                SelectedProduct.Id, null, Batch,
                 AsDateOnly(ProductionDate), AsDateOnly(ExpiryDate), QuantityText,
-                from, to - from + 1), ct);
+                cartonNumber, cartonTotal, SelectedPrinter?.Id), ct);
             if (!ct.IsCancellationRequested)
             {
+                // preview.Zpl is deliberately not surfaced: operators check the
+                // rendered label, not the printer command stream.
                 PreviewImage = Decode(preview.PngBase64);
-                PreviewZpl = preview.Zpl;
                 PreviewUnavailable = preview.Unavailable;
+                PreviewWarning = preview.Warning;
                 ErrorMessage = null;
             }
         }
@@ -253,7 +410,7 @@ public sealed partial class PrintViewModel : ObservableObject, IDisposable
         catch (Exception ex)
         {
             PreviewImage = null;
-            PreviewZpl = null;
+            PreviewWarning = null;
             ErrorMessage = Describe(ex);
         }
         finally
@@ -262,14 +419,73 @@ public sealed partial class PrintViewModel : ObservableObject, IDisposable
         }
     }
 
+    /// <summary>Live reachability of the selected printer, polled every 20s
+    /// and on demand. Best-effort: an unreachable status endpoint reads as
+    /// "Status unknown", never as an error and never as a block on printing.</summary>
+    [RelayCommand]
+    private async Task CheckPrinterStatusAsync()
+    {
+        var printer = SelectedPrinter;
+        if (printer is null)
+        {
+            PrinterStatusKind = "None";
+            PrinterStatusText = null;
+            return;
+        }
+
+        var generation = ++_printerStatusGeneration;
+        try
+        {
+            var status = await _api.GetPrinterStatusAsync(printer.Id, CancellationToken.None);
+            if (generation != _printerStatusGeneration || SelectedPrinter?.Id != printer.Id)
+            {
+                return; // A newer probe (or another printer) owns the caption now.
+            }
+            if (status.Online)
+            {
+                PrinterStatusKind = "Online";
+                PrinterStatusText = "✓ Online";
+            }
+            else
+            {
+                PrinterStatusKind = "Offline";
+                PrinterStatusText = string.IsNullOrWhiteSpace(status.Detail)
+                    ? "⚠ Offline"
+                    : $"⚠ Offline — {status.Detail}";
+            }
+        }
+        catch (Exception ex)
+        {
+            if (generation != _printerStatusGeneration)
+            {
+                return;
+            }
+            PrinterStatusKind = "Unknown";
+            PrinterStatusText = "Status unknown";
+            System.Diagnostics.Debug.WriteLine($"Printer status check failed: {ex}");
+        }
+    }
+
     private bool CanExecutePrint() =>
         CanPrint && !IsPrinting && SelectedProduct is not null &&
-        SelectedTemplate is not null && SelectedPrinter is not null &&
-        TryParseRange(out _, out _, out _);
+        SelectedPrinter is not null && TryParseRange(out _, out _, out _);
 
     [RelayCommand(CanExecute = nameof(CanExecutePrint))]
     private async Task PrintAsync()
     {
+        // Snapshot: the bound selections can change while dialogs are open.
+        var product = SelectedProduct;
+        var printer = SelectedPrinter;
+        if (product is null)
+        {
+            ErrorMessage = "Select a product first.";
+            return;
+        }
+        if (printer is null)
+        {
+            ErrorMessage = "No printer selected.";
+            return;
+        }
         if (!TryParseRange(out var from, out var to, out var rangeError))
         {
             ErrorMessage = rangeError;
@@ -281,18 +497,41 @@ public sealed partial class PrintViewModel : ObservableObject, IDisposable
             return;
         }
 
+        // Offline is a warning, not a block: queuing against an offline
+        // printer is legitimate (it prints on reconnect) but must be a choice.
+        if (PrinterStatusKind == "Offline")
+        {
+            var proceed = await DialogService.ConfirmAsync(
+                "Printer appears offline",
+                $"'{printer.Name}' is not responding right now. The job will be " +
+                "queued and should print when the printer is available again. Print anyway?",
+                "Print anyway");
+            if (!proceed)
+            {
+                return;
+            }
+        }
+
         IsPrinting = true;
         ErrorMessage = null;
         SuccessMessage = null;
         try
         {
+            // TemplateId null: the server resolves product default → printer
+            // default → global default (§15).
             var result = await _api.SubmitAsync(new PrintRequest(
-                SelectedProduct!.Id, SelectedTemplate!.Id, SelectedPrinter!.Id,
+                product.Id, null, printer.Id,
                 Batch, AsDateOnly(ProductionDate), AsDateOnly(ExpiryDate), QuantityText,
                 from, to, (int)(to - from + 1), copies, Environment.MachineName),
                 CancellationToken.None);
 
-            SuccessMessage = $"Sent {result.LabelCount} label(s) to {SelectedPrinter.Name} — job {result.JobNo}.";
+            // Honest about where the job actually went: client-dispatched jobs
+            // print when the owning workstation collects them, not "now".
+            SuccessMessage = result.DispatchMode == "Client"
+                ? $"Job {result.JobNo} queued for workstation '{result.OwnerWorkstation}' — " +
+                  $"{result.LabelCount} label(s) will print when it collects the job."
+                : $"Sent {result.LabelCount} label(s) to {printer.Name} — job {result.JobNo}.";
+            ToastService.Instance.Success(SuccessMessage);
 
             // Advance the range so the next run continues where this one ended.
             CartonFrom = (result.CartonTo + 1).ToString();
@@ -300,9 +539,23 @@ public sealed partial class PrintViewModel : ObservableObject, IDisposable
 
             await RefreshRecentAsync();
         }
+        catch (ApiException ex)
+        {
+            // Includes NO_TEMPLATE — the server message is operator-actionable
+            // ("ask an administrator"), so it is shown verbatim.
+            ErrorMessage = ex.Message;
+            ToastService.Instance.Error(ex.Message, ex.CorrelationId);
+        }
+        catch (ApiUnreachableException)
+        {
+            ErrorMessage = "Cannot reach the server. Check the connection.";
+            ToastService.Instance.Error(ErrorMessage);
+        }
         catch (Exception ex)
         {
-            ErrorMessage = Describe(ex);
+            System.Diagnostics.Debug.WriteLine($"Print submit failed unexpectedly: {ex}");
+            ErrorMessage = "Something went wrong. Please try again.";
+            ToastService.Instance.Error(ErrorMessage);
         }
         finally
         {
@@ -378,7 +631,8 @@ public sealed partial class PrintViewModel : ObservableObject, IDisposable
             }
 
             // A job that fails after the operator has moved on is the case this
-            // whole channel exists for — say so instead of leaving a green
+            // whole channel exists for — say so (covers watchdog failures such
+            // as WORKSTATION_UNAVAILABLE) instead of leaving a green
             // "submitted" message standing over a failed print.
             if (job.Status == "Failed")
             {
@@ -391,6 +645,7 @@ public sealed partial class PrintViewModel : ObservableObject, IDisposable
 
     public void Dispose()
     {
+        _printerStatusTimer.Stop();
         if (_statusHub is not null)
         {
             _ = _statusHub.DisposeAsync();
@@ -425,8 +680,8 @@ public sealed partial class PrintViewModel : ObservableObject, IDisposable
         }
         catch (Exception)
         {
-            // A corrupt preview must not take down the print screen; the ZPL
-            // panel still shows what would be sent.
+            // A corrupt preview must not take down the print screen; the screen
+            // falls back to its "preview unavailable" state.
             return null;
         }
     }
@@ -464,7 +719,7 @@ public sealed partial class PrintViewModel : ObservableObject, IDisposable
     private static string Describe(Exception ex) => ex switch
     {
         ApiException api => api.Message,
-        ApiUnreachableException => "Cannot reach the server. Check your network connection.",
+        ApiUnreachableException => "Cannot reach the server. Check the connection.",
         _ => "Something went wrong. Please try again.",
     };
 

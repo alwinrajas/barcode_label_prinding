@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Registers the nightly full backup and the hourly binary-log copy as
     Scheduled Tasks.

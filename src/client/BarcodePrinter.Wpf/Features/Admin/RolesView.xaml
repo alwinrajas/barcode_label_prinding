@@ -1,144 +1,201 @@
 <UserControl x:Class="BarcodePrinter.Wpf.Features.Admin.RolesView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="clr-namespace:BarcodePrinter.Wpf.Controls"
              Background="{StaticResource Surface.Base}">
-    <Grid Margin="24">
-        <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="300" />
-            <ColumnDefinition Width="*" />
-        </Grid.ColumnDefinitions>
+    <UserControl.InputBindings>
+        <KeyBinding Key="Escape" Command="{Binding CloseEditorCommand}" />
+    </UserControl.InputBindings>
 
-        <!-- Role list -->
-        <Grid Grid.Column="0" Margin="0,0,16,0">
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="*" />
-            </Grid.RowDefinitions>
-            <DockPanel Grid.Row="0" LastChildFill="False" Margin="0,0,0,12">
-                <TextBlock DockPanel.Dock="Left" Style="{StaticResource Text.H1}" Text="Roles"
-                           VerticalAlignment="Center" />
-                <Button DockPanel.Dock="Right" Height="34" Padding="12,0" Content="＋ New"
+    <Grid Margin="{StaticResource Pad.Page}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <controls:PageHeader Grid.Row="0" Title="Roles" Description="Permission sets for teams.">
+            <controls:PageHeader.Actions>
+                <Button Style="{StaticResource Button.Primary}" Content="New role"
                         Command="{Binding NewRoleCommand}"
                         Visibility="{Binding CanManage, Converter={StaticResource BoolToVisibility}}" />
-            </DockPanel>
-            <Border Grid.Row="1" Background="{StaticResource Surface.Card}"
-                    BorderBrush="{StaticResource Border.Default}" BorderThickness="1" CornerRadius="8">
-                <ListBox ItemsSource="{Binding Roles}" SelectedItem="{Binding SelectedRole}"
-                         BorderThickness="0" Background="Transparent" Padding="4">
-                    <ListBox.ItemTemplate>
-                        <DataTemplate>
-                            <StackPanel Margin="8,6">
-                                <TextBlock Style="{StaticResource Text.Body}" FontWeight="SemiBold" Text="{Binding Name}" />
-                                <TextBlock Style="{StaticResource Text.Caption}">
-                                    <Run Text="{Binding Code, Mode=OneWay}" FontFamily="{StaticResource Font.Mono}" />
-                                    <Run Text="{Binding PermissionCount, Mode=OneWay, StringFormat=· {0} permissions}" />
-                                    <Run Text="{Binding UserCount, Mode=OneWay, StringFormat=· {0} users}" />
-                                </TextBlock>
+            </controls:PageHeader.Actions>
+        </controls:PageHeader>
+
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="300" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <!-- Role list -->
+            <Border Grid.Column="0" Margin="0,0,16,0" Style="{StaticResource Card}" Padding="0">
+                <Grid>
+                    <ListBox ItemsSource="{Binding Roles}" SelectedItem="{Binding SelectedRole}"
+                             BorderThickness="0" Background="Transparent" Padding="4"
+                             AutomationProperties.Name="Roles"
+                             HorizontalContentAlignment="Stretch">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Margin="8,6">
+                                    <TextBlock Style="{StaticResource Text.Body}" FontWeight="SemiBold"
+                                               TextTrimming="CharacterEllipsis" Text="{Binding Name}" />
+                                    <TextBlock Style="{StaticResource Text.Caption}" TextWrapping="Wrap">
+                                        <Run Text="{Binding Code, Mode=OneWay}" FontFamily="{StaticResource Font.Mono}" />
+                                        <Run Text="{Binding PermissionCount, Mode=OneWay, StringFormat=· {0} permissions}" />
+                                        <Run Text="{Binding UserCount, Mode=OneWay, StringFormat=· {0} users}" />
+                                    </TextBlock>
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+
+                    <controls:EmptyState Glyph="&#xE716;" Title="No roles yet"
+                                         Message="Create a role to group the permissions a team needs."
+                                         Visibility="{Binding IsEmpty, Converter={StaticResource BoolToVisibility}}">
+                        <controls:EmptyState.Action>
+                            <Button Style="{StaticResource Button.Primary}" Content="New role"
+                                    Command="{Binding NewRoleCommand}"
+                                    Visibility="{Binding CanManage, Converter={StaticResource BoolToVisibility}}" />
+                        </controls:EmptyState.Action>
+                    </controls:EmptyState>
+
+                    <controls:ErrorState Message="{Binding LoadErrorMessage}"
+                                         Reference="{Binding LoadErrorReference}"
+                                         RetryCommand="{Binding RetryLoadCommand}"
+                                         Visibility="{Binding LoadFailed, Converter={StaticResource BoolToVisibility}}" />
+                </Grid>
+            </Border>
+
+            <!-- Permission matrix -->
+            <Border Grid.Column="1" Style="{StaticResource Card}" Padding="0"
+                    Visibility="{Binding IsEditorOpen, Converter={StaticResource BoolToVisibility}}">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <StackPanel Grid.Row="0" Margin="{StaticResource Pad.Card}">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Style="{StaticResource Text.H2}" VerticalAlignment="Center"
+                                       TextTrimming="CharacterEllipsis" Text="{Binding EditorTitle}" />
+                            <Button Grid.Column="1" Style="{StaticResource Button.Icon}" Content="&#xE711;"
+                                    Command="{Binding CloseEditorCommand}"
+                                    AutomationProperties.Name="Close role editor" ToolTip="Close" />
+                        </Grid>
+
+                        <Grid Margin="0,12,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="180" />
+                                <ColumnDefinition Width="12" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0">
+                                <TextBlock Style="{StaticResource Text.Label}" Text="Code *" Margin="0,0,0,4" />
+                                <TextBox Style="{StaticResource Input.Text}" FontFamily="{StaticResource Font.Mono}"
+                                         Text="{Binding EditCode, UpdateSourceTrigger=PropertyChanged}"
+                                         IsEnabled="{Binding IsSystemRole, Converter={StaticResource InverseBool}}"
+                                         AutomationProperties.Name="Role code" />
                             </StackPanel>
-                        </DataTemplate>
-                    </ListBox.ItemTemplate>
-                </ListBox>
+                            <StackPanel Grid.Column="2">
+                                <TextBlock Style="{StaticResource Text.Label}" Text="Name *" Margin="0,0,0,4" />
+                                <TextBox Style="{StaticResource Input.Text}"
+                                         Text="{Binding EditName, UpdateSourceTrigger=PropertyChanged}"
+                                         AutomationProperties.Name="Role name" />
+                            </StackPanel>
+                        </Grid>
+                        <TextBlock Style="{StaticResource Text.Label}" Text="PERMISSIONS" Margin="0,20,0,0" />
+                    </StackPanel>
+
+                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="16,0,16,0">
+                        <ItemsControl ItemsSource="{Binding Modules}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Background="{StaticResource Surface.Sunken}" CornerRadius="6"
+                                            Padding="12,10" Margin="{StaticResource Gap.Below.SM}">
+                                        <StackPanel>
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Style="{StaticResource Text.Body}" VerticalAlignment="Center"
+                                                           FontWeight="SemiBold" Text="{Binding Module}" />
+                                                <Button Grid.Column="1" Style="{StaticResource Button.Ghost}"
+                                                        Content="Toggle all"
+                                                        Command="{Binding DataContext.SelectAllInModuleCommand,
+                                                            RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                        CommandParameter="{Binding}" />
+                                            </Grid>
+                                            <ItemsControl ItemsSource="{Binding Permissions}" Margin="0,8,0,0">
+                                                <ItemsControl.ItemsPanel>
+                                                    <ItemsPanelTemplate>
+                                                        <WrapPanel />
+                                                    </ItemsPanelTemplate>
+                                                </ItemsControl.ItemsPanel>
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <CheckBox Margin="0,4,20,4" MinWidth="190"
+                                                                  IsChecked="{Binding IsSelected}"
+                                                                  Content="{Binding DisplayName}"
+                                                                  ToolTip="{Binding Code}" />
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+
+                    <Border Grid.Row="2" BorderBrush="{StaticResource Border.Default}" BorderThickness="0,1,0,0"
+                            Padding="{StaticResource Pad.Card}">
+                        <StackPanel>
+                            <!-- Diff before save: the admin sees exactly what changes -->
+                            <Border Background="{StaticResource Brush.Info.Soft}" CornerRadius="6" Padding="10,8"
+                                    Margin="{StaticResource Gap.Below.MD}"
+                                    Visibility="{Binding PendingChangeSummary, Converter={StaticResource NullToCollapsed}}">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&#xE946;" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                                               VerticalAlignment="Center"
+                                               Foreground="{StaticResource Accent.Info}" />
+                                    <TextBlock Style="{StaticResource Text.Caption}" Margin="8,0,0,0"
+                                               VerticalAlignment="Center" TextWrapping="Wrap"
+                                               Foreground="{StaticResource Text.Primary}"
+                                               Text="{Binding PendingChangeSummary}" />
+                                </StackPanel>
+                            </Border>
+
+                            <Border Background="{StaticResource Brush.Danger.Soft}" CornerRadius="6" Padding="10,8"
+                                    Margin="{StaticResource Gap.Below.MD}"
+                                    Visibility="{Binding ErrorMessage, Converter={StaticResource NullToCollapsed}}">
+                                <TextBlock Style="{StaticResource Text.Caption}" TextWrapping="Wrap"
+                                           Foreground="{StaticResource Accent.Danger}" Text="{Binding ErrorMessage}" />
+                            </Border>
+
+                            <Grid Visibility="{Binding CanManage, Converter={StaticResource BoolToVisibility}}">
+                                <Button HorizontalAlignment="Left" Style="{StaticResource Button.Danger}"
+                                        Content="Delete role" Command="{Binding DeleteCommand}"
+                                        IsEnabled="{Binding IsSystemRole, Converter={StaticResource InverseBool}}" />
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                    <Button Style="{StaticResource Button.Secondary}" Content="Cancel" MinWidth="88"
+                                            Command="{Binding CloseEditorCommand}" />
+                                    <Button Style="{StaticResource Button.Primary}" Content="Save role" MinWidth="88"
+                                            Margin="8,0,0,0" Command="{Binding SaveCommand}" />
+                                </StackPanel>
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+                </Grid>
             </Border>
         </Grid>
 
-        <!-- Permission matrix -->
-        <Border Grid.Column="1" Style="{StaticResource Card}" Padding="20"
-                Visibility="{Binding IsEditorOpen, Converter={StaticResource BoolToVisibility}}">
-            <Grid>
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="*" />
-                    <RowDefinition Height="Auto" />
-                </Grid.RowDefinitions>
-
-                <StackPanel Grid.Row="0">
-                    <TextBlock Style="{StaticResource Text.H1}" Text="{Binding EditorTitle}" />
-                    <Grid Margin="0,12,0,0">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="180" />
-                            <ColumnDefinition Width="12" />
-                            <ColumnDefinition Width="*" />
-                        </Grid.ColumnDefinitions>
-                        <StackPanel Grid.Column="0">
-                            <TextBlock Style="{StaticResource Text.Label}" Text="Code *" Margin="0,0,0,4" />
-                            <TextBox Style="{StaticResource Input.Text}" FontFamily="{StaticResource Font.Mono}"
-                                     Text="{Binding EditCode, UpdateSourceTrigger=PropertyChanged}"
-                                     IsEnabled="{Binding IsSystemRole, Converter={StaticResource InverseBool}}" />
-                        </StackPanel>
-                        <StackPanel Grid.Column="2">
-                            <TextBlock Style="{StaticResource Text.Label}" Text="Name *" Margin="0,0,0,4" />
-                            <TextBox Style="{StaticResource Input.Text}"
-                                     Text="{Binding EditName, UpdateSourceTrigger=PropertyChanged}" />
-                        </StackPanel>
-                    </Grid>
-                    <TextBlock Style="{StaticResource Text.Label}" Text="PERMISSIONS" Margin="0,20,0,8" />
-                </StackPanel>
-
-                <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
-                    <ItemsControl ItemsSource="{Binding Modules}">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <Border Background="{StaticResource Surface.Sunken}" CornerRadius="6"
-                                        Padding="12,10" Margin="0,0,0,8">
-                                    <StackPanel>
-                                        <DockPanel LastChildFill="False">
-                                            <TextBlock DockPanel.Dock="Left" Style="{StaticResource Text.Body}"
-                                                       FontWeight="SemiBold" Text="{Binding Module}" />
-                                            <Button DockPanel.Dock="Right" Content="Toggle all" Height="24" Padding="8,0"
-                                                    FontSize="11" Background="Transparent"
-                                                    Command="{Binding DataContext.SelectAllInModuleCommand,
-                                                        RelativeSource={RelativeSource AncestorType=UserControl}}"
-                                                    CommandParameter="{Binding}" />
-                                        </DockPanel>
-                                        <ItemsControl ItemsSource="{Binding Permissions}" Margin="0,8,0,0">
-                                            <ItemsControl.ItemsPanel>
-                                                <ItemsPanelTemplate>
-                                                    <WrapPanel />
-                                                </ItemsPanelTemplate>
-                                            </ItemsControl.ItemsPanel>
-                                            <ItemsControl.ItemTemplate>
-                                                <DataTemplate>
-                                                    <CheckBox Margin="0,4,20,4" MinWidth="190"
-                                                              IsChecked="{Binding IsSelected}"
-                                                              Content="{Binding DisplayName}"
-                                                              ToolTip="{Binding Code}"
-                                                              FontFamily="{StaticResource Font.Ui}" FontSize="13" />
-                                                </DataTemplate>
-                                            </ItemsControl.ItemTemplate>
-                                        </ItemsControl>
-                                    </StackPanel>
-                                </Border>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                </ScrollViewer>
-
-                <StackPanel Grid.Row="2" Margin="0,12,0,0">
-                    <!-- Diff before save: the admin sees exactly what changes -->
-                    <Border Background="{StaticResource Surface.Sunken}" CornerRadius="6" Padding="10,6"
-                            Visibility="{Binding PendingChangeSummary, Converter={StaticResource NullToCollapsed}}">
-                        <TextBlock Style="{StaticResource Text.Caption}" Foreground="{StaticResource Accent.Warning}"
-                                   Text="{Binding PendingChangeSummary}" />
-                    </Border>
-                    <TextBlock Margin="0,8,0,0" Style="{StaticResource Text.Caption}"
-                               Foreground="{StaticResource Accent.Danger}" TextWrapping="Wrap"
-                               Text="{Binding ErrorMessage}" />
-                    <TextBlock Margin="0,4,0,0" Style="{StaticResource Text.Caption}"
-                               Foreground="{StaticResource Accent.Success}" Text="{Binding StatusMessage}" />
-                    <StackPanel Orientation="Horizontal" Margin="0,12,0,0"
-                                Visibility="{Binding CanManage, Converter={StaticResource BoolToVisibility}}">
-                        <Button Style="{StaticResource Button.Primary}" Content="Save role"
-                                Command="{Binding SaveCommand}" />
-                        <Button Margin="8,0,0,0" Height="40" Padding="14,0" Content="Delete role"
-                                Command="{Binding DeleteCommand}"
-                                IsEnabled="{Binding IsSystemRole, Converter={StaticResource InverseBool}}" />
-                    </StackPanel>
-                </StackPanel>
-            </Grid>
-        </Border>
-            <!-- LOADING: spans the whole screen at the top so it reads as "this page
-             is fetching", without covering the data already on it. -->
-        <ProgressBar Grid.RowSpan="99" Grid.ColumnSpan="99" Margin="-24,-24,-24,0"
-                     Style="{StaticResource State.BusyBar}" />
-</Grid>
+        <controls:BusyOverlay Grid.RowSpan="2" IsActive="{Binding IsBusy}" Text="Working…" />
+    </Grid>
 </UserControl>

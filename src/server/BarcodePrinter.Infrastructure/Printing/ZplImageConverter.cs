@@ -24,8 +24,10 @@ public sealed class ZplImageConverter(
     ILogger<ZplImageConverter> logger)
 {
     /// <summary>Above this, a label image is almost certainly a mistake and
-    /// would take seconds to transmit at 9600 baud.</summary>
-    private const int MaxDots = 1_200;
+    /// would take seconds to transmit at 9600 baud. Public so the preview can
+    /// warn about an image the printer would drop — the on-screen rasteriser
+    /// has no such limit, so silence here would let preview and print differ.</summary>
+    public const int MaxDots = 1_200;
 
     private static readonly TimeSpan CacheFor = TimeSpan.FromHours(6);
 

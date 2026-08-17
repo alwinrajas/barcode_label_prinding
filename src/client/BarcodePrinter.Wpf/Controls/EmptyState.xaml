@@ -1,0 +1,21 @@
+<UserControl x:Class="BarcodePrinter.Wpf.Controls.EmptyState"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Name="self">
+    <!-- Empty ≠ broken: explain what would be here and how to get it (§12). -->
+    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="420">
+        <TextBlock Text="{Binding Glyph, ElementName=self}" FontFamily="Segoe MDL2 Assets"
+                   FontSize="36" HorizontalAlignment="Center"
+                   Foreground="{StaticResource Text.Secondary}" />
+        <TextBlock Style="{StaticResource Text.H2}" Margin="0,16,0,0" HorizontalAlignment="Center"
+                   TextAlignment="Center" TextWrapping="Wrap"
+                   Text="{Binding Title, ElementName=self}" />
+        <TextBlock Style="{StaticResource Text.Body}" Margin="0,6,0,0" HorizontalAlignment="Center"
+                   TextAlignment="Center" TextWrapping="Wrap"
+                   Foreground="{StaticResource Text.Secondary}"
+                   Text="{Binding Message, ElementName=self}"
+                   Visibility="{Binding Message, ElementName=self, Converter={StaticResource NullToCollapsed}}" />
+        <ContentPresenter Margin="0,16,0,0" HorizontalAlignment="Center"
+                          Content="{Binding Action, ElementName=self}" />
+    </StackPanel>
+</UserControl>

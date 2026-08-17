@@ -80,6 +80,11 @@ public sealed class PrintApi(ApiClient api)
     public Task<PrinterTestResultDto> TestPrinterAsync(long id, CancellationToken ct) =>
         api.PostAsync<object, PrinterTestResultDto>(ApiRoutes.Printers.Test(id), new { }, ct);
 
+    /// <summary>Live reachability of one printer — TCP probe for network
+    /// printers, workstation heartbeat for client-dispatched ones.</summary>
+    public Task<PrinterStatusDto> GetPrinterStatusAsync(long id, CancellationToken ct) =>
+        api.GetAsync<PrinterStatusDto>(ApiRoutes.Printers.Status(id), ct);
+
     /// <summary>Live job status (B-16). Returns the connection so the caller
     /// owns its lifetime; if it cannot be established the caller keeps its
     /// existing refresh-on-demand behaviour and simply loses the live updates.

@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Start-Sleep -Seconds 4; $s = \"C:\\\\Users\\\\iamal\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\d--Office-Projects-Barcode-Printer-Barcode-Printer\\\\b85da93c-79b3-41d1-b613-598f2743eae8\\\\scratchpad\\\\ui.ps1\"; & $s -Shot \"ui-state.png\")"
+    ]
+  }
+}

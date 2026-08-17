@@ -1,102 +1,117 @@
 <UserControl x:Class="BarcodePrinter.Wpf.Features.Admin.SettingsView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="clr-namespace:BarcodePrinter.Wpf.Controls"
              Background="{StaticResource Surface.Base}">
-    <Grid Margin="24">
+    <Grid Margin="{StaticResource Pad.Page}">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
-            <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <DockPanel Grid.Row="0" LastChildFill="False" Margin="0,0,0,16">
-            <TextBlock DockPanel.Dock="Left" Style="{StaticResource Text.H1}" Text="Settings"
-                       VerticalAlignment="Center" />
-            <Button DockPanel.Dock="Right" Height="36" Padding="16,0" Content="Reload"
-                    Command="{Binding LoadCommand}" />
-        </DockPanel>
+        <controls:PageHeader Grid.Row="0" Title="Settings" Description="Application configuration.">
+            <controls:PageHeader.Actions>
+                <StackPanel Orientation="Horizontal">
+                    <Button Style="{StaticResource Button.Secondary}" Content="Reload"
+                            Command="{Binding LoadCommand}" />
+                    <Button Style="{StaticResource Button.Primary}" Margin="8,0,0,0" Content="Save changes"
+                            Command="{Binding SaveCommand}"
+                            Visibility="{Binding CanManage, Converter={StaticResource BoolToVisibility}}" />
+                </StackPanel>
+            </controls:PageHeader.Actions>
+        </controls:PageHeader>
 
-        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-            <ItemsControl ItemsSource="{Binding Groups}" HorizontalAlignment="Stretch">
-                <ItemsControl.ItemTemplate>
-                    <DataTemplate>
-                        <Border Style="{StaticResource Card}" Padding="24" Margin="0,0,0,20" HorizontalAlignment="Stretch">
-                            <StackPanel HorizontalAlignment="Stretch">
-                                <TextBlock Style="{StaticResource Text.H1}" FontSize="18" Text="{Binding Name}" Margin="0,0,0,16" />
-                                <ItemsControl ItemsSource="{Binding Items}" HorizontalAlignment="Stretch">
-                                    <ItemsControl.ItemTemplate>
-                                        <DataTemplate>
-                                            <Grid Margin="0,0,0,20" HorizontalAlignment="Stretch">
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="320" />
-                                                    <ColumnDefinition Width="*" />
-                                                </Grid.ColumnDefinitions>
-                                                <StackPanel Grid.Column="0" Margin="0,0,24,0" VerticalAlignment="Top">
-                                                    <TextBlock Style="{StaticResource Text.Body}" FontWeight="SemiBold" Text="{Binding Label}" />
-                                                    <TextBlock Style="{StaticResource Text.Caption}" TextWrapping="Wrap" Margin="0,2,0,0"
-                                                               Text="{Binding Description}" />
-                                                </StackPanel>
-                                                <StackPanel Grid.Column="1" VerticalAlignment="Top">
-                                                    <TextBox Style="{StaticResource Input.Text}"
-                                                             Text="{Binding Value, UpdateSourceTrigger=PropertyChanged}"
-                                                             Visibility="{Binding IsBool, Converter={StaticResource InverseBoolToVisibility}}" />
-                                                    <CheckBox VerticalAlignment="Center" Content="Enabled"
-                                                             IsChecked="{Binding BoolValue}"
-                                                             FontFamily="{StaticResource Font.Ui}" FontSize="14"
-                                                             Visibility="{Binding IsBool, Converter={StaticResource BoolToVisibility}}" />
+        <Grid Grid.Row="1">
+            <!-- One shared label column across every card, so the eye follows a
+                 single edge down the whole page. -->
+            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                          Grid.IsSharedSizeScope="True">
+                <ItemsControl ItemsSource="{Binding Groups}" HorizontalAlignment="Stretch">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Border Style="{StaticResource Card}" Padding="24" Margin="0,0,0,20"
+                                    HorizontalAlignment="Stretch">
+                                <StackPanel HorizontalAlignment="Stretch">
+                                    <TextBlock Style="{StaticResource Text.H2}" Text="{Binding Name}"
+                                               Margin="{StaticResource Gap.Below.LG}" />
+                                    <ItemsControl ItemsSource="{Binding Items}" HorizontalAlignment="Stretch">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Grid Margin="0,0,0,20" HorizontalAlignment="Stretch">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="Auto" MinWidth="220"
+                                                                          SharedSizeGroup="SettingLabel" />
+                                                        <ColumnDefinition Width="*" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <StackPanel Grid.Column="0" Margin="0,0,24,0" VerticalAlignment="Top">
+                                                        <TextBlock Style="{StaticResource Text.Body}" FontWeight="SemiBold"
+                                                                   TextWrapping="Wrap" Text="{Binding Label}" />
+                                                        <TextBlock Style="{StaticResource Text.Caption}" TextWrapping="Wrap"
+                                                                   Margin="0,2,0,0" Text="{Binding Description}" />
+                                                        <TextBlock Style="{StaticResource Text.Caption}" Margin="0,4,0,0"
+                                                                   FontWeight="SemiBold"
+                                                                   Foreground="{StaticResource Accent.Warning}"
+                                                                   Text="Administrator setting"
+                                                                   Visibility="{Binding IsAdminSetting, Converter={StaticResource BoolToVisibility}}" />
+                                                        <TextBlock Style="{StaticResource Text.Mono}" FontSize="11"
+                                                                   Margin="0,4,0,0" TextWrapping="Wrap"
+                                                                   Foreground="{StaticResource Text.Secondary}"
+                                                                   Text="{Binding Key}" />
+                                                    </StackPanel>
+                                                    <StackPanel Grid.Column="1" VerticalAlignment="Top">
+                                                        <TextBox Style="{StaticResource Input.Text}"
+                                                                 Text="{Binding Value, UpdateSourceTrigger=PropertyChanged}"
+                                                                 AutomationProperties.Name="{Binding Label}"
+                                                                 Visibility="{Binding IsBool, Converter={StaticResource InverseBoolToVisibility}}" />
+                                                        <CheckBox VerticalAlignment="Center" Content="Enabled"
+                                                                  IsChecked="{Binding BoolValue}"
+                                                                  AutomationProperties.Name="{Binding Label}"
+                                                                  Visibility="{Binding IsBool, Converter={StaticResource BoolToVisibility}}" />
 
-                                                    <!-- Live QR Code Preview for Feedback URL -->
-                                                    <Border Margin="0,12,0,0" Padding="14" CornerRadius="8"
-                                                            Background="{StaticResource Surface.Sunken}"
-                                                            HorizontalAlignment="Left"
-                                                            Visibility="{Binding IsFeedbackUrl, Converter={StaticResource BoolToVisibility}}">
-                                                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                                            <Border Background="White" CornerRadius="6" Padding="6" Margin="0,0,16,0" VerticalAlignment="Center">
-                                                                <Image Source="{Binding QrPreviewImage}" Width="140" Height="140"
-                                                                       RenderOptions.BitmapScalingMode="HighQuality"
-                                                                       AutomationProperties.Name="Live QR code preview" />
-                                                            </Border>
-                                                            <StackPanel VerticalAlignment="Center" MaxWidth="260">
-                                                                <TextBlock Style="{StaticResource Text.Body}" FontWeight="SemiBold" Text="Live Feedback QR Code" />
-                                                                <TextBlock Style="{StaticResource Text.Caption}" TextWrapping="Wrap" Margin="0,4,0,0"
-                                                                           Text="This QR code is generated dynamically from the feedback URL above. Operators can scan this QR code directly from printed labels." />
+                                                        <!-- Live QR preview: the operator sees what a scanner
+                                                             will see, before the URL reaches a printed label. -->
+                                                        <Border Margin="0,12,0,0" Padding="14" CornerRadius="8"
+                                                                Background="{StaticResource Surface.Sunken}"
+                                                                HorizontalAlignment="Left"
+                                                                Visibility="{Binding IsFeedbackUrl, Converter={StaticResource BoolToVisibility}}">
+                                                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                                                <Border Background="White" CornerRadius="6" Padding="6"
+                                                                        Margin="0,0,16,0" VerticalAlignment="Center">
+                                                                    <Image Source="{Binding QrPreviewImage}" Width="140" Height="140"
+                                                                           RenderOptions.BitmapScalingMode="HighQuality"
+                                                                           AutomationProperties.Name="Live QR code preview" />
+                                                                </Border>
+                                                                <StackPanel VerticalAlignment="Center" MaxWidth="260">
+                                                                    <TextBlock Style="{StaticResource Text.Body}" FontWeight="SemiBold"
+                                                                               Text="Live Feedback QR Code" />
+                                                                    <TextBlock Style="{StaticResource Text.Caption}" TextWrapping="Wrap"
+                                                                               Margin="0,4,0,0"
+                                                                               Text="Generated from the feedback URL above. Operators scan this code straight from a printed label." />
+                                                                </StackPanel>
                                                             </StackPanel>
-                                                        </StackPanel>
-                                                    </Border>
-                                                </StackPanel>
-                                            </Grid>
-                                        </DataTemplate>
-                                    </ItemsControl.ItemTemplate>
-                                </ItemsControl>
-                            </StackPanel>
-                        </Border>
-                    </DataTemplate>
-                </ItemsControl.ItemTemplate>
-            </ItemsControl>
-        </ScrollViewer>
+                                                        </Border>
+                                                    </StackPanel>
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
 
-        <StackPanel Grid.Row="2" Margin="0,16,0,0">
-            <Border Margin="0,0,0,8" Padding="10,8" CornerRadius="6"
-                    Background="{StaticResource Surface.Sunken}"
-                    Visibility="{Binding ErrorMessage, Converter={StaticResource NullToCollapsed}}">
-                <TextBlock Style="{StaticResource Text.Caption}"
-                           Foreground="{StaticResource Accent.Danger}" TextWrapping="Wrap"
-                           Text="{Binding ErrorMessage}" />
-            </Border>
-            <Border Margin="0,0,0,8" Padding="10,8" CornerRadius="6"
-                    Background="{StaticResource Surface.Sunken}"
-                    Visibility="{Binding StatusMessage, Converter={StaticResource NullToCollapsed}}">
-                <TextBlock Style="{StaticResource Text.Body}" FontWeight="SemiBold"
-                           Foreground="{StaticResource Accent.Success}" TextWrapping="Wrap"
-                           Text="{Binding StatusMessage}" />
-            </Border>
-            <Button HorizontalAlignment="Left" Style="{StaticResource Button.Primary}"
-                    Content="Save changes" Command="{Binding SaveCommand}" Height="40" Padding="20,0"
-                    Visibility="{Binding CanManage, Converter={StaticResource BoolToVisibility}}" />
-        </StackPanel>
+            <controls:EmptyState Glyph="&#xE713;" Title="No settings to show"
+                                 Message="The server returned no configuration for this installation."
+                                 Visibility="{Binding IsEmpty, Converter={StaticResource BoolToVisibility}}" />
 
-        <!-- LOADING: spans the whole screen at the top -->
-        <ProgressBar Grid.RowSpan="99" Grid.ColumnSpan="99" Margin="-24,-24,-24,0"
-                     Style="{StaticResource State.BusyBar}" />
+            <controls:ErrorState Message="{Binding LoadErrorMessage}"
+                                 Reference="{Binding LoadErrorReference}"
+                                 RetryCommand="{Binding RetryLoadCommand}"
+                                 Visibility="{Binding LoadFailed, Converter={StaticResource BoolToVisibility}}" />
+        </Grid>
+
+        <controls:BusyOverlay Grid.RowSpan="2" IsActive="{Binding IsBusy}" Text="Working…" />
     </Grid>
 </UserControl>
