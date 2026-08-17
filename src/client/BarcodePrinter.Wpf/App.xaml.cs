@@ -85,6 +85,8 @@ public partial class App : Application
                 // reach it via ToastService.Instance this phase.
                 services.AddSingleton(Services.ToastService.Instance);
                 services.AddSingleton<ConnectionStatus>();
+                services.AddSingleton<BarcodePrinter.Printing.Client.IWindowsPrinterProbe,
+                    BarcodePrinter.Printing.Client.WindowsPrinterProbe>();
                 services.AddSingleton<ApiClient>();
                 services.AddSingleton<ProductsApi>();
                 services.AddTransient<LoginViewModel>();

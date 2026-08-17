@@ -108,6 +108,12 @@ public sealed class PrintApi(ApiClient api)
         return connection;
     }
 
+    /// <summary>Reports this workstation's own Windows queues (see
+    /// ClientPrintDispatcher). Fire-and-forget by nature: a failed report must
+    /// never affect printing.</summary>
+    public Task ReportLocalPrintersAsync(ReportLocalPrintersRequest request, CancellationToken ct) =>
+        api.PostAsync(ApiRoutes.Printers.LocalStatus, request, ct);
+
     private sealed record IdResponse(long Id);
 }
 

@@ -110,9 +110,17 @@ public sealed record LabelDefinition
 
     public int MmToDots(decimal mm) => (int)Math.Round(mm * Dpi / 25.4m, MidpointRounding.AwayFromZero);
 
-    /// <summary>Printable width in dots, honouring orientation.</summary>
-    public int WidthDots => MmToDots(Orientation == LabelOrientation.Landscape ? WidthMm : HeightMm);
-    public int HeightDots => MmToDots(Orientation == LabelOrientation.Landscape ? HeightMm : WidthMm);
+    /// <summary>
+    /// Printable width and feed length in dots.
+    ///
+    /// WidthMm is ALWAYS the width of the media as it passes the head, and
+    /// HeightMm always the feed length — that is how a label is measured and how
+    /// a supplier sells it ("4 by 6"). Orientation rotates the CONTENT (^POI); it
+    /// must not swap the media dimensions, or a 4x6 portrait label would be sent
+    /// a 6-inch print width and come out clipped.
+    /// </summary>
+    public int WidthDots => MmToDots(WidthMm);
+    public int HeightDots => MmToDots(HeightMm);
 
     /// <summary>The same definition at a different resolution. Used when a
     /// template is sent to a printer whose dpi differs from the design dpi.</summary>

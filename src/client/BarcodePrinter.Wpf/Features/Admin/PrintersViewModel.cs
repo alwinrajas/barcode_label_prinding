@@ -22,6 +22,38 @@ namespace BarcodePrinter.Wpf.Features.Admin;
 /// One grid row: the stored printer plus its live reachability, which is polled
 /// separately and must not force the whole list to reload.
 /// </summary>
+/// <summary>
+/// One printer Windows reports on this PC, plus whether it is already
+/// registered in the application. Both facts belong together: the button on the
+/// row reads "Use this printer" or "Make default" depending on it.
+/// </summary>
+public sealed class DetectedPrinterRow(DiscoveredPrinter printer, PrinterDto? existing)
+{
+    public DiscoveredPrinter Printer { get; } = printer;
+    public PrinterDto? Existing { get; } = existing;
+
+    public string Name => Printer.Name;
+    public string Connection => Printer.ConnectionLabel;
+    public string StatusText => Printer.StatusText;
+
+    /// <summary>Windows' own default, offered as the obvious choice.</summary>
+    public bool IsWindowsDefault => Printer.IsDefault;
+
+    public bool IsAppDefault => Existing?.IsDefault == true;
+    public bool IsRegistered => Existing is not null;
+
+    /// <summary>Offline is shown, never hidden — but the printer stays
+    /// selectable, because being offline now says nothing about later.</summary>
+    public bool IsUnavailable => Printer.Availability is
+        PrinterAvailability.Offline or PrinterAvailability.NeedsAttention;
+
+    public string ActionText => IsAppDefault ? "Default" : IsRegistered ? "Make default" : "Use this printer";
+
+    public string Detail => Printer.Kind == BarcodePrinter.Printing.Abstractions.PrinterConnectionKind.WindowsRaw
+        ? "Label printer · ZPL sent through the Windows driver"
+        : "Standard printer · the label is printed as a page";
+}
+
 public sealed partial class PrinterRow : ObservableObject
 {
     private DateTime? _lastSeenUtc;
@@ -157,15 +189,18 @@ public sealed partial class PrintersViewModel : ObservableObject
     private static readonly TimeSpan StatusPollInterval = TimeSpan.FromSeconds(30);
 
     private readonly PrintApi _api;
+    private readonly IWindowsPrinterProbe _probe;
     private readonly DispatcherTimer? _statusTimer;
     private bool _suppressDirty;
     private bool _pollingStatuses;
 
-    public PrintersViewModel(PrintApi api, Session session)
+    public PrintersViewModel(PrintApi api, Session session, IWindowsPrinterProbe? probe = null)
     {
         _api = api;
+        _probe = probe ?? new WindowsPrinterProbe();
         CanManage = session.Has(PermissionCodes.SettingsManagePrinters);
         InstalledPrinters = LoadInstalledPrinters();
+        DiscoverLocalPrinters();
         _ = RefreshAsync();
 
         // Live status ages fast: a printer switched off a minute ago must not
@@ -178,6 +213,16 @@ public sealed partial class PrintersViewModel : ObservableObject
             _statusTimer.Start();
         }
     }
+
+    /// <summary>
+    /// Printers Windows already has on THIS workstation. This is the normal way
+    /// to add a printer: the spooler knows the device, so there is no address to
+    /// type. The manual form stays for devices Windows does not have.
+    /// </summary>
+    public ObservableCollection<DetectedPrinterRow> Detected { get; } = [];
+
+    [ObservableProperty] private bool hasDetected;
+    [ObservableProperty] private string? detectionMessage;
 
     public ObservableCollection<PrinterDto> Printers { get; } = [];
     public ObservableCollection<PrinterRow> Rows { get; } = [];
@@ -305,11 +350,76 @@ public sealed partial class PrintersViewModel : ObservableObject
             IsEmpty = Rows.Count == 0;
         }, isLoad: true);
 
+        // Re-read the spooler too: a printer switched on, added or removed since
+        // the screen opened must appear on Refresh without restarting the app.
+        DiscoverLocalPrinters();
         await RefreshStatusesAsync();
     }
 
     [RelayCommand]
     private Task RetryLoadAsync() => RefreshAsync();
+
+    /// <summary>Reads the Windows spooler and marks which queues are already
+    /// registered, so the list shows what is left to add.</summary>
+    private void DiscoverLocalPrinters()
+    {
+        Detected.Clear();
+        try
+        {
+            foreach (var printer in _probe.Discover())
+            {
+                var existing = Printers.FirstOrDefault(p =>
+                    string.Equals(p.WindowsPrinterName, printer.Name, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(p.OwnerWorkstation, MachineName, StringComparison.OrdinalIgnoreCase));
+
+                Detected.Add(new DetectedPrinterRow(printer, existing));
+            }
+
+            HasDetected = Detected.Count > 0;
+            DetectionMessage = HasDetected
+                ? null
+                : "Windows reports no printers on this PC. Install one in Windows, " +
+                  "or add a network printer manually below.";
+        }
+        catch (Exception)
+        {
+            // A broken spooler must not take the screen down; the manual path remains.
+            HasDetected = false;
+            DetectionMessage = "The Windows printer list could not be read on this PC.";
+        }
+    }
+
+    /// <summary>
+    /// Registers a detected Windows printer and makes it this application's
+    /// default. No address is asked for: the queue is reached by name through
+    /// the spooler, and the job is dispatched from this workstation because that
+    /// is the only place the queue exists (§7.3).
+    /// </summary>
+    [RelayCommand]
+    private async Task UseDetectedAsync(DetectedPrinterRow? row)
+    {
+        if (row is null || !CanManage)
+        {
+            return;
+        }
+
+        await GuardAsync(async () =>
+        {
+            var request = LocalPrinterRegistration.ToRequest(
+                row.Printer, MachineName, existingCode: row.Existing?.Code);
+
+            var id = row.Existing?.Id
+                ?? await _api.CreatePrinterAsync(request, CancellationToken.None);
+            if (row.Existing is not null)
+            {
+                await _api.UpdatePrinterAsync(id, request, CancellationToken.None);
+            }
+
+            await _api.SetDefaultPrinterAsync(id, CancellationToken.None);
+            ToastService.Instance.Success($"{row.Printer.Name} is now the default printer.");
+            await RefreshAsync();
+        });
+    }
 
     /// <summary>Polls live reachability for the listed printers. Failures are
     /// absorbed into "Unknown": a status probe is a courtesy, not a reason to

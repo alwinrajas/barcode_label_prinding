@@ -1,0 +1,234 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Barcode Label Printing — bootstrapper.
+
+    This is the single file the customer receives. Its job is to put the
+    prerequisites in place, in order, before the application package runs:
+
+      1. The .NET Windows Desktop runtime — needed by this bundle's own user
+         interface, not by the product. See the note on the chain below.
+
+      2. Visual C++ x64 runtime — MySQL's binaries link against it. The API and
+         client do not need it (they are published self-contained), but MySQL
+         will not start without it, and diagnosing that from a service that
+         "just won't start" wastes an afternoon.
+
+      3. The application MSI, which lays down the payload (including the MySQL
+         archive) and then runs the deployment scripts.
+
+    Burn owns the Add/Remove Programs entry for the whole thing: the customer
+    sees one product to uninstall, not three.
+
+    ===========================================================================
+    WiX 4, not WiX 5.
+
+    Build this with the LOCAL WiX 4.0.6 tool — "dotnet tool run wix" from the
+    repository root — and with the bal extension version pinned:
+
+        -ext WixToolset.Bal.wixext/4.0.6
+
+    The pin is load-bearing. WiX 4 calls the extension WixToolset.Bal.wixext;
+    WiX 5 renamed it to WixToolset.BootstrapperApplications.wixext. Both live in
+    the shared %USERPROFILE%\.wix\extensions cache, and an unpinned reference
+    resolves unpredictably between them — reported as "damaged", not as a
+    version mismatch. Build-Installer.ps1 passes the pin; see the notes there.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:bal="http://wixtoolset.org/schemas/v4/wxs/bal"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+
+  <Bundle Name="!(loc.BundleName)"
+          Manufacturer="!(loc.Manufacturer)"
+          Version="$(var.ProductVersion)"
+          UpgradeCode="e4c8b1d7-3f60-4a29-8b5e-9d2c7a0f6135"
+          IconSourceFile="$(var.AppIcon)"
+          Compressed="yes">
+
+    <!-- The UpgradeCode is unchanged from the WixStandardBootstrapperApplication
+         version of this bundle. It is the bundle's identity: changing it would
+         make this build a second, unrelated product rather than an upgrade of
+         the one already on the customer's machine. -->
+
+    <!-- ===================== Bootstrapper application ===================== -->
+    <!--
+        A custom managed bootstrapper application, hosted by dnchost.dll.
+
+        Burn starts dnchost (carried inside bal.wixext), dnchost starts the .NET
+        runtime through hostfxr, and hostfxr loads the assembly marked
+        bal:BAFactoryAssembly below and calls the factory that
+        WixToolset.Dnc.HostGenerator generated into it.
+
+        SelfContainedDeployment="no": the BA is framework-dependent. It resolves
+        Microsoft.NETCore.App and Microsoft.WindowsDesktop.App from the shared
+        runtime, as recorded in its .runtimeconfig.json. The alternative — a
+        self-contained BA — would add roughly 100 MB of runtime to a bundle that
+        is already 400 MB, and would have to be extracted in full on every
+        launch, including the launch that only wants to show the uninstall
+        confirmation.
+    -->
+    <BootstrapperApplication>
+      <bal:WixDotNetCoreBootstrapperApplicationHost SelfContainedDeployment="no" />
+
+      <!-- Payloads are SIBLINGS of the host element, not children of it: the
+           bal element accepts no child elements, and nesting a Payload inside it
+           fails with WIX0200, "unhandled extension element 'Payload'".
+
+           Exactly one payload carries bal:BAFactoryAssembly="yes". It names the
+           entry-point managed DLL; without it the compiler refuses the bundle. -->
+      <Payload Name="BarcodePrinter.BootstrapperApp.dll"
+               SourceFile="$(var.BaDir)\BarcodePrinter.BootstrapperApp.dll"
+               bal:BAFactoryAssembly="yes" />
+
+      <!-- Native hosting reads both of these from the extracted BA folder.
+           Omitting either produces a bundle that BUILDS cleanly and then starts
+           with NO USER INTERFACE AT ALL, which is a miserable thing to debug. -->
+      <Payload Name="BarcodePrinter.BootstrapperApp.runtimeconfig.json"
+               SourceFile="$(var.BaDir)\BarcodePrinter.BootstrapperApp.runtimeconfig.json" />
+      <Payload Name="BarcodePrinter.BootstrapperApp.deps.json"
+               SourceFile="$(var.BaDir)\BarcodePrinter.BootstrapperApp.deps.json" />
+
+      <!-- The managed BA API and the native shim it P/Invokes for engine calls. -->
+      <Payload Name="WixToolset.Mba.Core.dll"
+               SourceFile="$(var.BaDir)\WixToolset.Mba.Core.dll" />
+      <Payload Name="mbanative.dll"
+               SourceFile="$(var.BaDir)\mbanative.dll" />
+    </BootstrapperApplication>
+
+    <!-- ========================== Preconditions ========================== -->
+
+    <!-- 64-bit only: the API, client and MySQL payloads are all win-x64. Saying
+         so here produces a clear message instead of a confusing mid-install
+         failure on a 32-bit machine. -->
+    <bal:Condition Condition="VersionNT64"
+                   Message="Barcode Label Printing requires 64-bit Windows." />
+    <bal:Condition Condition="VersionNT &gt;= v10.0"
+                   Message="Barcode Label Printing requires Windows 10 or Windows Server 2016 or later." />
+
+    <!-- ============================ Searches ============================ -->
+
+    <util:RegistrySearch Id="VCRuntimeInstalled"
+                         Root="HKLM"
+                         Key="SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64"
+                         Value="Installed"
+                         Result="value"
+                         Variable="VCRuntimeInstalled" />
+
+    <!--
+        Is the .NET Windows Desktop runtime this bundle's UI needs already here?
+
+        A directory search rather than a registry search, deliberately. The
+        registry key HKLM\SOFTWARE\dotnet\Setup\InstalledVersions\x64\sharedfx is
+        written by the standalone runtime installer but is absent on a machine
+        where .NET arrived with the SDK — which is exactly the developer machine
+        this gets tested on, so a registry search would have silently "detected"
+        the runtime as missing on the one machine where the failure is visible.
+        The shared-framework folder is present in both cases.
+
+        The path names the exact version this bundle carries. A machine holding a
+        NEWER 10.x patch will not match, and will install ours alongside it: the
+        runtime installer is side-by-side and exits cleanly, so the cost is time,
+        not correctness. Matching "any 10.x" is not expressible in a WiX search,
+        and inventing a condition that is wrong in the other direction — skipping
+        the install on a machine with only .NET 8 — would leave a bundle that
+        cannot show its own UI.
+    -->
+    <util:DirectorySearch Id="NetDesktopRuntimePresent"
+                          Path="[ProgramFiles64Folder]dotnet\shared\Microsoft.WindowsDesktop.App\$(var.NetRuntimeVersion)"
+                          Result="exists"
+                          Variable="NetDesktopRuntimePresent" />
+
+    <!-- ============================== Chain ============================== -->
+
+    <Chain>
+      <!--
+          bal:PrereqPackage="yes" is mandatory, not decorative: with
+          SelfContainedDeployment="no" the compiler rejects the bundle outright
+          (WIX6806) unless at least one chain package is marked as a
+          prerequisite.
+
+          It is also how the DNC host bootstraps itself. When hostfxr cannot find
+          a runtime to load the managed BA into, dnchost hands control to a small
+          NATIVE prerequisite bootstrapper application, which installs the
+          packages marked here and relaunches the bundle. A managed BA obviously
+          cannot install the runtime it needs in order to run, so this slot is
+          the only way the first-run case works at all.
+
+          Permanent="yes": other software on the machine may come to depend on
+          the runtime, and uninstalling Barcode Label Printing must not take it
+          away.
+      -->
+      <!--
+          No RepairArguments and no UninstallArguments, deliberately. Omitting
+          them tells Burn the package cannot be repaired or removed, so it skips
+          it on both paths.
+
+          Repair is the one that matters. "BarcodePrinterSetup.exe /repair"
+          otherwise repairs every package in the chain, and repairing the .NET
+          Windows Desktop runtime means running its installer against the very
+          runtime the bootstrapper application is executing on. Observed on
+          2026-08-17: the runtime's Restart Manager began asking processes to
+          close and the repair sat there for over ten minutes, with the
+          installer's own UI as one of the processes it was waiting for. The
+          product's repair path must not depend on repairing its own host.
+
+          Uninstall is the same argument as Permanent="yes": other software on
+          the machine may have come to depend on the runtime by now.
+      -->
+      <ExePackage Id="NetCoreDesktopRuntime"
+                  DisplayName="Microsoft .NET Windows Desktop Runtime $(var.NetRuntimeVersion) (x64)"
+                  SourceFile="$(var.NetRuntimeExe)"
+                  InstallArguments="/install /quiet /norestart"
+                  Permanent="yes"
+                  Vital="yes"
+                  Compressed="yes"
+                  bal:PrereqPackage="yes"
+                  DetectCondition="NetDesktopRuntimePresent" />
+
+      <!-- Permanent, non-repairable and non-removable for the same reasons as
+           the runtime above: repairing a shared Microsoft runtime is not this
+           product's job, and doing it in the middle of the product's own repair
+           only adds a way for that repair to fail. -->
+      <ExePackage Id="VCRedist"
+                  DisplayName="Microsoft Visual C++ x64 Runtime"
+                  SourceFile="$(var.VCRedistExe)"
+                  InstallArguments="/install /quiet /norestart"
+                  Permanent="yes"
+                  Vital="yes"
+                  Compressed="yes"
+                  DetectCondition="VCRuntimeInstalled AND VCRuntimeInstalled &gt;= 1" />
+
+      <!-- Burn suppresses the package's own UI by default, which is what we
+           want: the bundle is the only thing the customer should see. The
+           bootstrapper application reports this package's progress itself, and
+           tails the deployment log its custom action writes. -->
+      <MsiPackage Id="BarcodePrinterApp"
+                  SourceFile="$(var.MsiPath)"
+                  Vital="yes"
+                  Compressed="yes">
+        <MsiProperty Name="HTTPSPORT" Value="[HttpsPort]" />
+        <MsiProperty Name="LANSUBNET" Value="[LanSubnet]" />
+      </MsiPackage>
+    </Chain>
+
+    <!--
+        Site-specific settings, for the rare deployment that needs a different
+        port or wants other workstations to reach the API:
+
+            BarcodePrinterSetup.exe HttpsPort=5002 LanSubnet=192.168.1.0/24
+
+        bal:Overridable="yes" is what makes that work, and it is required on both
+        halves. It writes the variable into BootstrapperApplicationData.xml as
+        overridable, and the bootstrapper application reads that allow-list and
+        applies the matching command-line pairs — see ApplyCommandLineVariables
+        in BarcodePrinterBootstrapperApplication.cs.
+
+        Burn does NOT do this by itself. It parses its own switches and hands
+        the rest to the BA as text. A bundle that carries these variables but no
+        BA-side handling accepts "HttpsPort=70000" without complaint and then
+        installs on 5001 anyway.
+    -->
+    <Variable Name="HttpsPort" Value="5001" bal:Overridable="yes" />
+    <Variable Name="LanSubnet" Value="" bal:Overridable="yes" />
+
+  </Bundle>
+</Wix>

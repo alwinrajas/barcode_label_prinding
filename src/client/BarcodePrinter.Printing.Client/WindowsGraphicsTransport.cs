@@ -1,4 +1,5 @@
 using System.Drawing;
+using System.IO;
 using System.Drawing.Printing;
 using System.Runtime.Versioning;
 using BarcodePrinter.Printing.Abstractions;

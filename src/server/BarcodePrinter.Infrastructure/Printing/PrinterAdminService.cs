@@ -15,7 +15,8 @@ public sealed record PrinterTestResult(bool Success, string Message);
 public sealed class PrinterAdminService(
     IDbConnectionFactory connections,
     IEnumerable<IPrintTransport> transports,
-    IAuditWriter audit)
+    IAuditWriter audit,
+    LocalPrinterStatusCache localStatus)
 {
     public async Task<long> CreateAsync(SavePrinterRequest request, ActorInfo actor, CancellationToken ct)
     {
@@ -150,17 +151,38 @@ public sealed class PrinterAdminService(
             """
             SELECT CAST(id AS SIGNED) AS Id, connection_type AS ConnectionType,
                    dispatch_mode AS DispatchMode, host AS Host, port AS Port,
+                   windows_printer_name AS WindowsPrinterName,
                    owner_workstation AS OwnerWorkstation, last_seen_at AS LastSeenUtc
             FROM printers WHERE id = @id
             """, new { id }, cancellationToken: ct)) ?? throw new NotFoundException("Printer", id);
 
         if (row.DispatchMode == "Client")
         {
-            var fresh = row.LastSeenUtc is { } seen && DateTime.UtcNow - seen < TimeSpan.FromSeconds(15);
-            return new PrinterStatusDto(id, fresh,
-                fresh ? null
-                    : $"Workstation '{row.OwnerWorkstation ?? "not configured"}' is not running the application.",
-                row.LastSeenUtc);
+            // Two separate facts, reported separately. Collapsing them is how an
+            // unplugged printer ends up with a green light: the workstation was
+            // running, so "Online" was true — of the PC, not of the printer.
+            var workstationRunning =
+                row.LastSeenUtc is { } seen && DateTime.UtcNow - seen < TimeSpan.FromSeconds(15);
+
+            if (!workstationRunning)
+            {
+                return new PrinterStatusDto(id, false,
+                    $"Workstation '{row.OwnerWorkstation ?? "not configured"}' is not running the application.",
+                    row.LastSeenUtc);
+            }
+
+            var reported = localStatus.TryGet(row.OwnerWorkstation, row.WindowsPrinterName);
+            if (reported is null)
+            {
+                // The PC is up but has not told us about this queue. Saying so is
+                // better than guessing either way.
+                return new PrinterStatusDto(id, false,
+                    "Waiting for the workstation to report this printer.", row.LastSeenUtc);
+            }
+
+            var (availability, statusText) = reported.Value;
+            var ready = string.Equals(availability, "Ready", StringComparison.OrdinalIgnoreCase);
+            return new PrinterStatusDto(id, ready, ready ? null : statusText, row.LastSeenUtc);
         }
 
         if (row.ConnectionType == "NetworkTcp")
@@ -250,7 +272,8 @@ public sealed class PrinterAdminService(
         public string DispatchMode { get; set; } = "";
         public string? Host { get; set; }
         public int? Port { get; set; }
-        public string? OwnerWorkstation { get; set; }
+        public string? WindowsPrinterName { get; set; }
+    public string? OwnerWorkstation { get; set; }
         public DateTime? LastSeenUtc { get; set; }
     }
 }

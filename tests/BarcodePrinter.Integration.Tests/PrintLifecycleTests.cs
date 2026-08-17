@@ -73,8 +73,17 @@ public class PrintLifecycleTests(ApiFixture fx) : IAsyncLifetime
 
     // ---- Client-dispatch heartbeat + watchdog -------------------------------
 
+    /// <summary>
+    /// "Is the workstation running?" and "is the printer available?" are two
+    /// different questions, and a client-dispatched printer needs both answered.
+    ///
+    /// Conflating them was a real defect: an unplugged USB label printer showed a
+    /// green "Online" because the PC it is attached to was running the app. A
+    /// heartbeat is therefore necessary but NOT sufficient — the workstation must
+    /// also report what it can see.
+    /// </summary>
     [Fact]
-    public async Task Printer_status_follows_the_workstation_heartbeat()
+    public async Task Printer_status_needs_both_a_heartbeat_and_a_printer_report()
     {
         var printerId = await EnsureClientPrinterAsync("IT-WS-STATUS");
 
@@ -87,14 +96,74 @@ public class PrintLifecycleTests(ApiFixture fx) : IAsyncLifetime
         (await _admin.GetAsync($"{ApiRoutes.Print.Pending}?workstation=IT-WS-STATUS"))
             .EnsureSuccessStatusCode();
 
-        var after = await _admin.GetFromJsonAsync<PrinterStatusDto>(ApiRoutes.Printers.Status(printerId));
-        after!.Online.Should().BeTrue("the workstation just polled");
-        after.LastSeenUtc.Should().NotBeNull();
+        var heartbeatOnly = await _admin.GetFromJsonAsync<PrinterStatusDto>(
+            ApiRoutes.Printers.Status(printerId));
+        heartbeatOnly!.Online.Should().BeFalse(
+            "the PC is up, but nothing has been said about the printer itself");
+        heartbeatOnly.Detail.Should().Contain("report",
+            "an unknown printer state must be stated, not guessed either way");
+        heartbeatOnly.LastSeenUtc.Should().NotBeNull("the heartbeat still counts as last-seen");
+
+        // Now the workstation reports the queue as ready.
+        await ReportLocalPrinterAsync("IT-WS-STATUS", "IT Test Printer", "Ready", "Ready");
+
+        var ready = await _admin.GetFromJsonAsync<PrinterStatusDto>(ApiRoutes.Printers.Status(printerId));
+        ready!.Online.Should().BeTrue("the workstation is up and says the printer is ready");
+        ready.Detail.Should().BeNull();
 
         var listed = await _admin.GetFromJsonAsync<List<PrinterDto>>(
             $"{ApiRoutes.Printers.Base}/?activeOnly=false");
         listed!.First(p => p.Id == printerId).LastSeenUtc.Should().NotBeNull(
             "the printers grid shows last-seen");
+    }
+
+    /// <summary>
+    /// The case that was reported wrong in the field: the PC is running, so the
+    /// old code said "Online", while the printer was physically unplugged.
+    /// </summary>
+    [Fact]
+    public async Task An_unplugged_printer_reports_offline_even_though_its_pc_is_running()
+    {
+        var printerId = await EnsureClientPrinterAsync("IT-WS-UNPLUG");
+
+        (await _admin.GetAsync($"{ApiRoutes.Print.Pending}?workstation=IT-WS-UNPLUG"))
+            .EnsureSuccessStatusCode();
+        await ReportLocalPrinterAsync("IT-WS-UNPLUG", "IT Test Printer", "Offline", "Offline");
+
+        var status = await _admin.GetFromJsonAsync<PrinterStatusDto>(
+            ApiRoutes.Printers.Status(printerId));
+
+        status!.Online.Should().BeFalse(
+            "a running workstation says nothing about whether the printer is plugged in");
+        status.Detail.Should().Be("Offline");
+        status.LastSeenUtc.Should().NotBeNull("the workstation IS running — that part was true");
+    }
+
+    [Fact]
+    public async Task A_printer_needing_attention_reports_the_reason_it_gave()
+    {
+        var printerId = await EnsureClientPrinterAsync("IT-WS-PAPER");
+
+        (await _admin.GetAsync($"{ApiRoutes.Print.Pending}?workstation=IT-WS-PAPER"))
+            .EnsureSuccessStatusCode();
+        await ReportLocalPrinterAsync(
+            "IT-WS-PAPER", "IT Test Printer", "NeedsAttention", "Out of paper");
+
+        var status = await _admin.GetFromJsonAsync<PrinterStatusDto>(
+            ApiRoutes.Printers.Status(printerId));
+
+        status!.Online.Should().BeFalse();
+        status.Detail.Should().Be("Out of paper",
+            "the operator needs the actual reason, not a generic failure");
+    }
+
+    private async Task ReportLocalPrinterAsync(
+        string workstation, string printerName, string availability, string statusText)
+    {
+        var response = await _admin.PostAsJsonAsync(ApiRoutes.Printers.LocalStatus,
+            new ReportLocalPrintersRequest(workstation,
+                [new WorkstationPrinterStatus(printerName, availability, statusText)]));
+        response.EnsureSuccessStatusCode();
     }
 
     [Fact]

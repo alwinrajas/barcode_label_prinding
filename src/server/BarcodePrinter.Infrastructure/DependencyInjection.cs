@@ -64,6 +64,8 @@ public static class DependencyInjection
         // Native = a definition we own; Zpl = a file the client owns. Both
         // compile to the same stored format, so the print engine sees one shape.
         services.AddSingleton<ITemplateAdapter, Labels.Native.NativeTemplateAdapter>();
+        // Singleton: live readings shared across requests (see the class remarks).
+        services.AddSingleton<Printing.LocalPrinterStatusCache>();
         services.AddScoped<Printing.ZplImageConverter>();
         services.AddSingleton<Printing.LabelRasterizer>();
         services.AddScoped<Printing.LabelPreviewService>();

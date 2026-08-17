@@ -44,42 +44,79 @@
             </Border>
 
             <!-- Alerts (FRD: system notifications) -->
-            <ItemsControl Grid.Row="2" ItemsSource="{Binding Alerts}" Margin="{StaticResource Gap.Below.LG}"
-                          Visibility="{Binding HasAlerts, Converter={StaticResource BoolToVisibility}}">
-                <ItemsControl.ItemTemplate>
-                    <DataTemplate>
-                        <Border CornerRadius="8" Padding="14,12" Margin="{StaticResource Gap.Below.SM}"
-                                BorderThickness="1">
-                            <Border.Style>
-                                <Style TargetType="Border">
-                                    <Setter Property="Background" Value="{StaticResource Brush.Warning.Soft}" />
-                                    <Setter Property="BorderBrush" Value="{StaticResource Accent.Warning}" />
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding Severity}" Value="Error">
-                                            <Setter Property="Background" Value="{StaticResource Brush.Danger.Soft}" />
-                                            <Setter Property="BorderBrush" Value="{StaticResource Accent.Danger}" />
-                                        </DataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </Border.Style>
-                            <DockPanel LastChildFill="True">
-                                <Button DockPanel.Dock="Right" VerticalAlignment="Center"
-                                        Style="{StaticResource Button.Secondary}" Content="Open"
-                                        Command="{Binding DataContext.NavigateCommand,
-                                            RelativeSource={RelativeSource AncestorType=UserControl}}"
-                                        CommandParameter="{Binding NavigateTo}"
-                                        Visibility="{Binding NavigateTo, Converter={StaticResource NullToCollapsed}}" />
-                                <StackPanel>
-                                    <TextBlock Style="{StaticResource Text.Body}" FontWeight="SemiBold"
-                                               Text="{Binding Title}" />
-                                    <TextBlock Style="{StaticResource Text.Caption}" TextWrapping="Wrap"
-                                               Text="{Binding Detail}" />
-                                </StackPanel>
-                            </DockPanel>
+            <!-- ═══ Needs attention ═══
+                 One card, one row per item. Four full-width coloured blocks
+                 dominated the page and pushed the figures below the fold, which
+                 made a routine warning look like an outage. A severity rail plus
+                 a tight row keeps the same information scannable and lets the
+                 numbers stay visible. -->
+            <Border Grid.Row="2" Style="{StaticResource Card}" Padding="0"
+                    Margin="{StaticResource Gap.Below.LG}"
+                    Visibility="{Binding HasAlerts, Converter={StaticResource BoolToVisibility}}">
+                <StackPanel>
+                    <DockPanel Margin="16,14,16,10" LastChildFill="False">
+                        <TextBlock DockPanel.Dock="Left" Style="{StaticResource Text.H2}"
+                                   Text="Needs attention" VerticalAlignment="Center" />
+                        <Border DockPanel.Dock="Left" Margin="8,0,0,0" Padding="7,1" CornerRadius="9"
+                                VerticalAlignment="Center"
+                                Background="{StaticResource Surface.Sunken}">
+                            <TextBlock Style="{StaticResource Text.Caption}" FontWeight="SemiBold"
+                                       Text="{Binding Alerts.Count}" />
                         </Border>
-                    </DataTemplate>
-                </ItemsControl.ItemTemplate>
-            </ItemsControl>
+                    </DockPanel>
+
+                    <ItemsControl ItemsSource="{Binding Alerts}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <!-- Hairline between rows, not around each item:
+                                     a list reads as one thing, four boxes read as
+                                     four problems. -->
+                                <Border BorderThickness="0,1,0,0"
+                                        BorderBrush="{StaticResource Border.Default}"
+                                        Padding="0">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="3" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+
+                                        <!-- Severity is a rail, so colour marks the
+                                             row without tinting the whole card. -->
+                                        <Rectangle Grid.Column="0">
+                                            <Rectangle.Style>
+                                                <Style TargetType="Rectangle">
+                                                    <Setter Property="Fill" Value="{StaticResource Accent.Warning}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding Severity}" Value="Error">
+                                                            <Setter Property="Fill" Value="{StaticResource Accent.Danger}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Rectangle.Style>
+                                        </Rectangle>
+
+                                        <StackPanel Grid.Column="1" Margin="13,10,12,10"
+                                                    VerticalAlignment="Center">
+                                            <TextBlock Style="{StaticResource Text.Body}" FontWeight="SemiBold"
+                                                       TextWrapping="Wrap" Text="{Binding Title}" />
+                                            <TextBlock Style="{StaticResource Text.Caption}" TextWrapping="Wrap"
+                                                       Margin="0,1,0,0" Text="{Binding Detail}" />
+                                        </StackPanel>
+
+                                        <Button Grid.Column="2" VerticalAlignment="Center" Margin="0,0,16,0"
+                                                Height="30" Padding="14,0" Content="Open"
+                                                Command="{Binding DataContext.NavigateCommand,
+                                                    RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                CommandParameter="{Binding NavigateTo}"
+                                                Visibility="{Binding NavigateTo, Converter={StaticResource NullToCollapsed}}" />
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
 
             <!-- KPI stat cards: even 12 px gutters via explicit gap columns
                  (a UniformGrid + per-tile margin made the last tile wider). -->

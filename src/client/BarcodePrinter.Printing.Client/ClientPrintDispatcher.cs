@@ -19,8 +19,14 @@ namespace BarcodePrinter.Printing.Client;
 public sealed class ClientPrintDispatcher(
     PrintApi api,
     IEnumerable<IPrintTransport> transports,
+    IWindowsPrinterProbe probe,
     ILogger<ClientPrintDispatcher> logger) : IAsyncDisposable
 {
+    /// <summary>Reported less often than jobs are polled: queue state changes on
+    /// a human timescale, and it must not add traffic to the print path.</summary>
+    private static readonly TimeSpan StatusReportInterval = TimeSpan.FromSeconds(20);
+
+    private DateTime _lastStatusReport = DateTime.MinValue;
     private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(3);
 
     private readonly Channel<long> _queue =
@@ -49,6 +55,8 @@ public sealed class ClientPrintDispatcher(
         {
             try
             {
+                await ReportLocalPrintersAsync(ct);
+
                 foreach (var jobId in await api.GetPendingAsync(Workstation, ct))
                 {
                     // Claim before queueing: a second workstation mis-configured
@@ -71,6 +79,40 @@ public sealed class ClientPrintDispatcher(
             {
                 logger.LogWarning(ex, "Print poll failed");
             }
+        }
+    }
+
+    /// <summary>
+    /// Tells the server what this PC can see. Only this PC can answer it: a
+    /// printer attached here is invisible to the server, and without the report
+    /// the server can only say whether the WORKSTATION is running — which is how
+    /// an unplugged printer comes to show a green light.
+    /// </summary>
+    private async Task ReportLocalPrintersAsync(CancellationToken ct)
+    {
+        if (DateTime.UtcNow - _lastStatusReport < StatusReportInterval)
+        {
+            return;
+        }
+        _lastStatusReport = DateTime.UtcNow;
+
+        try
+        {
+            var printers = probe.Discover()
+                .Select(p => new WorkstationPrinterStatus(
+                    p.Name, p.Availability.ToString(), p.StatusText))
+                .ToList();
+
+            if (printers.Count > 0)
+            {
+                await api.ReportLocalPrintersAsync(
+                    new ReportLocalPrintersRequest(Workstation, printers), ct);
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Reporting is observability, never a reason to stop printing.
+            logger.LogDebug(ex, "Could not report local printer status");
         }
     }
 

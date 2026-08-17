@@ -161,6 +161,16 @@ public sealed class ApiClient(HttpClient http, ConnectionStatus connection)
         return true;
     }
 
+    /// <summary>POST with a body and no response body (204).</summary>
+    public async Task PostAsync<TReq>(string url, TReq body, CancellationToken ct)
+    {
+        var response = await SendAsync(() => new HttpRequestMessage(HttpMethod.Post, url)
+        {
+            Content = JsonContent.Create(body),
+        }, ct);
+        await ThrowIfProblemAsync(response, ct);
+    }
+
     public async Task PutAsync<TReq>(string url, TReq body, CancellationToken ct)
     {
         var response = await SendAsync(() => new HttpRequestMessage(HttpMethod.Put, url)

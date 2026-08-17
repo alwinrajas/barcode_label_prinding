@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Product identity lives here, in one file, so the name shown in the installer
+    UI, the Start Menu, Add/Remove Programs and the bundle cannot drift apart.
+    Change it here and everything follows.
+-->
+<WixLocalization Culture="en-us" xmlns="http://wixtoolset.org/schemas/v4/wxl">
+
+  <String Id="ProductName" Value="Barcode Label Printing" />
+  <String Id="Manufacturer" Value="Barcode Label Printing" />
+  <String Id="ShortcutDescription" Value="Barcode Label Printing" />
+
+  <String Id="DowngradeError"
+          Value="A newer version of Barcode Label Printing is already installed. Uninstall it first if you genuinely intend to go back to this version." />
+
+  <String Id="BundleName" Value="Barcode Label Printing" />
+
+  <!-- Shown only if the client will not close on request. It names the one
+       thing the customer has to do, rather than listing every locked file. -->
+  <String Id="CloseClientPrompt"
+          Value="Barcode Label Printing is currently running and must close before setup can continue. Setup will ask it to close now; save any work in progress." />
+
+</WixLocalization>

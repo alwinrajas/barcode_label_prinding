@@ -1,0 +1,371 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Barcode Label Printing — application package.
+
+    This MSI owns FILES and machine registration only: the payload, the
+    shortcuts and the Add/Remove Programs entry. Everything that has to be
+    decided on the target machine — which port MySQL can have, which certificate
+    to use, what the service account password is — is done by the deployment
+    scripts it invokes, because none of it can be baked into a package at build
+    time.
+
+    The division matters for repair and uninstall: Windows Installer can only
+    repair files it tracks, so files it does not lay down itself are files it
+    cannot fix. That is why Install-Server.ps1 is passed -ApiBinPath and does
+    not copy the API into place any more.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+
+  <Package Name="!(loc.ProductName)"
+           Manufacturer="!(loc.Manufacturer)"
+           Version="$(var.ProductVersion)"
+           UpgradeCode="8a4e6c02-7d21-4f8b-9c3a-5e1d0b7f4a96"
+           Scope="perMachine"
+           Compressed="yes"
+           InstallerVersion="500">
+
+    <SummaryInformation Description="!(loc.ProductName) $(var.ProductVersion)" />
+
+    <!-- Schedule after InstallInitialize so the previous version is fully
+         removed before the new files land. The removal's own custom action is
+         suppressed during an upgrade (see RemoveSystem below), so the database
+         and certificate survive. -->
+    <MajorUpgrade Schedule="afterInstallInitialize"
+                  DowngradeErrorMessage="!(loc.DowngradeError)"
+                  AllowSameVersionUpgrades="yes" />
+
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <Icon Id="AppIcon" SourceFile="$(var.ClientDir)\BarcodePrinter.Wpf.exe" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+
+    <!-- Overridable from the bundle or a command line, for the rare site that
+         needs a different port or wants other workstations to connect.
+         LANSUBNET carries no default: an empty Value attribute is rejected, and
+         "unset" is exactly what we mean — no LAN exposure unless asked for. -->
+    <Property Id="HTTPSPORT" Value="5001" Secure="yes" />
+    <Property Id="LANSUBNET" Secure="yes" />
+
+    <!-- ================= Layout ================= -->
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="!(loc.ProductName)">
+        <Directory Id="ApiDir"      Name="api" />
+        <Directory Id="ClientDir"   Name="client" />
+        <Directory Id="MigratorDir" Name="migrator" />
+        <Directory Id="MySqlDir"    Name="mysql" />
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="AppMenuFolder" Name="!(loc.ProductName)" />
+    </StandardDirectory>
+    <StandardDirectory Id="DesktopFolder" />
+
+    <!-- ================= Payload ================= -->
+    <!--
+        The payload is HARVESTED, not listed here. It used to be six <Files>
+        elements; <Files> is a WiX 5 element and does not exist in WiX 4, which
+        rejects it outright:
+
+            error WIX0005: The ComponentGroup element contains an unexpected
+            child element 'Files'.
+
+        Build-Installer.ps1 now runs WiX 4's heat over each staged folder after
+        publish and before the build, writing one fragment per payload group
+        into the intermediate folder. The fragments define exactly the five
+        ComponentGroups the Feature below references — ApiPayload,
+        ClientPayload, MigratorPayload, ScriptPayload, MySqlPayload — rooted at
+        exactly the same directory refs as before.
+
+        The fragments are generated, never committed: harvesting from the
+        published output is the whole point, and a checked-in file list is a
+        file list that goes stale the first time a dependency is added.
+
+        Component GUIDs stay stable because heat is invoked with -ag, which
+        emits Guid="*" and leaves the GUID to be derived at compile time from
+        the component's INSTALL path. That is the same derivation <Files> used,
+        so a file that lands in the same place keeps the same component
+        identity — which is what upgrade and repair are keyed on. heat's other
+        option, -gg, bakes a fresh random GUID in at harvest time and would give
+        every file a new identity on every build. It is not used here and must
+        not be.
+
+        The API and client are self-contained, so the .NET runtime travels
+        inside these folders and the target machine needs no runtime installed.
+
+        The MySQL archive is harvested as the archive rather than pre-extracted:
+        the extracted tree is ~1.5 GB of files Windows Installer would have to
+        track, repair and remove, none of which it is the right owner of — the
+        data directory beside it is not ours to reason about.
+    -->
+
+    <!-- ================= Shortcuts ================= -->
+
+    <ComponentGroup Id="Shortcuts">
+      <Component Id="MenuShortcut" Directory="AppMenuFolder" Guid="1f7a5c88-2b64-4f0d-9a17-6c3e8d2b5019">
+        <Shortcut Id="MenuShortcutFile"
+                  Name="!(loc.ProductName)"
+                  Description="!(loc.ShortcutDescription)"
+                  Target="[ClientDir]BarcodePrinter.Wpf.exe"
+                  WorkingDirectory="ClientDir" />
+        <!-- A shortcut folder is not removed unless something says to remove
+             it, and an empty Start Menu folder left behind after uninstall is
+             the classic symptom of forgetting this. -->
+        <RemoveFolder Id="RemoveMenuFolder" Directory="AppMenuFolder" On="uninstall" />
+        <RegistryValue Root="HKLM" Key="Software\!(loc.Manufacturer)\!(loc.ProductName)"
+                       Name="MenuShortcut" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+
+      <Component Id="DesktopShortcut" Directory="DesktopFolder" Guid="4d92e1b7-8c05-4a3f-b6d2-0e7a91c4f83b">
+        <Shortcut Id="DesktopShortcutFile"
+                  Name="!(loc.ProductName)"
+                  Description="!(loc.ShortcutDescription)"
+                  Target="[ClientDir]BarcodePrinter.Wpf.exe"
+                  WorkingDirectory="ClientDir" />
+        <RegistryValue Root="HKLM" Key="Software\!(loc.Manufacturer)\!(loc.ProductName)"
+                       Name="DesktopShortcut" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+
+      <!-- Records where we installed, so support and the bundle can find it. -->
+      <Component Id="InstallRecord" Directory="INSTALLFOLDER" Guid="b3c07f45-9e12-4d6a-8f70-2a5b6c9d1e34">
+        <RegistryValue Root="HKLM" Key="Software\!(loc.Manufacturer)\!(loc.ProductName)"
+                       Name="InstallDir" Type="string" Value="[INSTALLFOLDER]" KeyPath="yes" />
+        <RegistryValue Root="HKLM" Key="Software\!(loc.Manufacturer)\!(loc.ProductName)"
+                       Name="Version" Type="string" Value="$(var.ProductVersion)" />
+      </Component>
+    </ComponentGroup>
+
+    <Feature Id="Main" Title="!(loc.ProductName)" Level="1" AllowAbsent="no">
+      <ComponentGroupRef Id="ApiPayload" />
+      <ComponentGroupRef Id="ClientPayload" />
+      <ComponentGroupRef Id="MigratorPayload" />
+      <ComponentGroupRef Id="ScriptPayload" />
+      <ComponentGroupRef Id="MySqlPayload" />
+      <ComponentGroupRef Id="Shortcuts" />
+    </Feature>
+
+    <!-- ================= Configuration ================= -->
+    <!--
+        Deferred and non-impersonated: this runs as SYSTEM, after the files are
+        on disk, which is what creating services and machine certificates
+        requires. Return="check" makes a script failure fail the installation,
+        so a broken install cannot report success.
+
+        The scripts write their own logs to ProgramData; the exit code is all
+        Windows Installer needs from them.
+    -->
+
+    <!--
+        Two details that are easy to get wrong and fail identically:
+
+        WixQuietExec64, not CAQuietExec64 — the latter is the WiX v3 name, and
+        referencing it produces "Error 1723: A DLL required for this install
+        could not be run", which reads like a corrupt package rather than a
+        typo.
+
+        [INSTALLFOLDER] always ends in a backslash, so "[INSTALLFOLDER]" would
+        pass ...Printing\" to PowerShell, where the backslash escapes the
+        closing quote and swallows the rest of the command line. The trailing
+        dot keeps the path valid and the quoting intact.
+    -->
+
+    <!-- ============================================================
+         Process lifecycle, BEFORE Windows Installer needs the files.
+
+         The "Files in Use" dialog is raised by InstallValidate, which runs
+         long before any of the actions below used to fire: StopApiService sat
+         after InstallInitialize and the uninstall script ran before
+         RemoveFiles, so by the time either stopped anything the customer had
+         already been asked to close the application by hand. The desktop
+         client was never closed at all, which is why the dialog listed it
+         several times over — one entry per open window.
+
+         So the shutdown is scheduled before InstallValidate instead, and it
+         covers install, repair, upgrade and uninstall alike. The Restart
+         Manager stays enabled underneath as a backstop; it is not suppressed,
+         because a lock we failed to clear is something the customer must be
+         told about, not something to hide.
+         ============================================================ -->
+
+    <!-- Backstop only. Verified against the built MSI's InstallExecuteSequence:
+         WiX schedules this at 3999, immediately before InstallFiles — which is
+         AFTER InstallValidate (1400) and even after RemoveFiles. It therefore
+         cannot prevent the Files in Use dialog on its own, and the assumption
+         that it could is what left the desktop client in that dialog. It is
+         kept because it registers with the Restart Manager and catches a client
+         relaunched between validation and file copy; the real close happens in
+         PreflightShutdown below. Deliberately no TerminateProcess: killing an
+         operator's session mid-print run is worse than telling them the truth. -->
+    <util:CloseApplication Id="CloseDesktopClient"
+                           Target="BarcodePrinter.Wpf.exe"
+                           Description="!(loc.CloseClientPrompt)"
+                           CloseMessage="yes"
+                           ElevatedCloseMessage="yes"
+                           RebootPrompt="no"
+                           Timeout="30" />
+
+    <!-- The one action that actually prevents the Files in Use dialog, because
+         it is the only one that runs before InstallValidate. Deferred actions
+         cannot be scheduled that early, so this is IMMEDIATE; under Burn the
+         MSI already runs elevated, so it has the rights to stop a service, and
+         it runs in the customer's interactive session, so it can ask the
+         client's windows to close.
+
+         Unconditional: the client and the service hold the payload open
+         whether we are upgrading over it, repairing it or removing it.
+
+         Order matters — the client is asked to close first so it is not
+         mid-request when the API goes away.
+
+         It never fails the transaction (Return="ignore"): if something refuses
+         to close, the Restart Manager backstop still names it in the Files in
+         Use dialog, which is a better outcome than an aborted installation. -->
+    <SetProperty Id="PreflightShutdown"
+                 Sequence="execute"
+                 Before="PreflightShutdown"
+                 Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command &quot;$ErrorActionPreference='SilentlyContinue'; foreach ($p in @(Get-Process -Name 'BarcodePrinter.Wpf')) { try { $null = $p.CloseMainWindow() } catch { } }; $d=(Get-Date).AddSeconds(30); while ((Get-Process -Name 'BarcodePrinter.Wpf') -and (Get-Date) -lt $d) { Start-Sleep -Milliseconds 500 }; $s=Get-Service -Name 'BarcodePrinter.Api'; if ($s -and $s.Status -ne 'Stopped') { Stop-Service -Name 'BarcodePrinter.Api' -Force; try { $s.WaitForStatus('Stopped',[TimeSpan]::FromSeconds(60)) } catch { } }; $d2=(Get-Date).AddSeconds(30); while ((Get-Process -Name 'BarcodePrinter.Api') -and (Get-Date) -lt $d2) { Start-Sleep -Milliseconds 500 }; exit 0&quot;" />
+
+    <CustomAction Id="PreflightShutdown"
+                  DllEntry="WixQuietExec64"
+                  BinaryRef="Wix4UtilCA_X64"
+                  Execute="immediate" Return="ignore" />
+
+    <!-- Kept as a second line of defence for the window between InstallValidate
+         and InstallFiles: the service is set to delayed-auto with restart-on-
+         failure, so a machine that reboots or a watchdog that fires in that gap
+         can start it again underneath us. -->
+    <SetProperty Id="StopApiService"
+                 Sequence="execute"
+                 Before="StopApiService"
+                 Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -Command &quot;Stop-Service -Name 'BarcodePrinter.Api' -Force -ErrorAction SilentlyContinue; exit 0&quot;" />
+
+    <CustomAction Id="StopApiService"
+                  DllEntry="WixQuietExec64"
+                  BinaryRef="Wix4UtilCA_X64"
+                  Execute="deferred" Impersonate="no" Return="ignore" />
+
+    <!--
+        The undo half of ConfigureSystem. Windows Installer rolls back only what
+        Windows Installer did; the services, certificate, service account and
+        firewall rule are created by PowerShell, so a rolled-back transaction
+        used to leave every one of them behind. BP-20260816-839444A5 ended with a
+        stopped BarcodePrinter.Api service whose binPath pointed at an executable
+        the rollback had already deleted, and BarcodePrinterMySQL still running.
+
+        Install-BarcodePrinter.ps1 snapshots what already existed before it
+        provisions anything; this script removes only the difference, and never
+        the database or the key ring. Return="ignore" because a rollback that
+        fails must not compound the failure it is cleaning up after.
+    -->
+    <SetProperty Id="RollbackSystem"
+                 Sequence="execute"
+                 Before="RollbackSystem"
+                 Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -ExecutionPolicy Bypass -File &quot;[INSTALLFOLDER]Rollback-BarcodePrinter.ps1&quot; -InstallDir &quot;[INSTALLFOLDER].&quot;" />
+
+    <CustomAction Id="RollbackSystem"
+                  DllEntry="WixQuietExec64"
+                  BinaryRef="Wix4UtilCA_X64"
+                  Execute="rollback" Impersonate="no" Return="ignore" />
+
+    <SetProperty Id="ConfigureSystem"
+                 Sequence="execute"
+                 Before="ConfigureSystem"
+                 Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -ExecutionPolicy Bypass -File &quot;[INSTALLFOLDER]Install-BarcodePrinter.ps1&quot; -InstallDir &quot;[INSTALLFOLDER].&quot; -HttpsPort [HTTPSPORT] -LanSubnet &quot;[LANSUBNET]&quot;" />
+
+    <CustomAction Id="ConfigureSystem"
+                  DllEntry="WixQuietExec64"
+                  BinaryRef="Wix4UtilCA_X64"
+                  Execute="deferred" Impersonate="no" Return="check" />
+
+    <!-- No -Confirm:$false here: under `powershell -File`, `$false` is a
+         literal STRING, binding it to a SwitchParameter throws, and the script
+         never runs at all — services and the account survive uninstall. The
+         confirmation prompt only guards -RemoveData, which this command never
+         passes, so nothing prompts. -->
+    <SetProperty Id="RemoveSystem"
+                 Sequence="execute"
+                 Before="RemoveSystem"
+                 Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -ExecutionPolicy Bypass -File &quot;[INSTALLFOLDER]Uninstall-BarcodePrinter.ps1&quot; -InstallDir &quot;[INSTALLFOLDER].&quot;" />
+
+    <CustomAction Id="RemoveSystem"
+                  DllEntry="WixQuietExec64"
+                  BinaryRef="Wix4UtilCA_X64"
+                  Execute="deferred" Impersonate="no" Return="ignore" />
+
+    <InstallExecuteSequence>
+      <!-- Ahead of InstallValidate, which is where the Restart Manager decides
+           whether to raise the Files in Use dialog. Unconditional: an upgrade
+           removes the previous binaries, a repair restages them and an
+           uninstall deletes them — the service holds them open in all three. -->
+      <Custom Action="PreflightShutdown" Before="InstallValidate" />
+
+      <Custom Action="StopApiService" After="InstallInitialize"
+              Condition="NOT REMOVE" />
+
+      <!-- After CreateShortcuts, not InstallFiles. The scripts it runs are part
+           of the payload, so InstallFiles is the earliest it COULD run — but its
+           last phase verifies the finished installation, and shortcuts are laid
+           down by CreateShortcuts at sequence 4500. Scheduled at 4002 the
+           verification looked for a Start Menu entry Windows Installer had not
+           created yet and failed a perfectly healthy install (BP-20260816-839444A5:
+           15 of 16 checks green, API answering /health, database migrated).
+           Running after CreateShortcuts means the checks see what the customer
+           will see. -->
+      <!-- BEFORE ConfigureSystem, which reads backwards but is the only correct
+           place for it. A rollback custom action is not executed here: it is
+           WRITTEN INTO the rollback script as the sequence runs, and the rollback
+           script is played back in reverse. So it must be sequenced before the
+           action it protects, or it is never recorded at the point where
+           ConfigureSystem fails and there is nothing to undo the damage.
+
+           Same NOT REMOVE condition as ConfigureSystem, so the two are always
+           written as a pair — a rollback action guarding an action that did not
+           run is a rollback action that finds no manifest and exits quietly.
+
+           Also After="CreateShortcuts", but listed first so its sequence number
+           lands below ConfigureSystem's. -->
+      <Custom Action="RollbackSystem" After="CreateShortcuts"
+              Condition="NOT REMOVE" />
+
+      <Custom Action="ConfigureSystem" After="CreateShortcuts"
+              Condition="NOT REMOVE" />
+
+      <!-- Before RemoveFiles, for the same reason in reverse — and NOT during
+           an upgrade, where tearing the service and certificate down only to
+           rebuild them seconds later risks losing both for no benefit. -->
+      <Custom Action="RemoveSystem" Before="RemoveFiles"
+              Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+    </InstallExecuteSequence>
+
+    <!-- No MSI UI. The bundle is what the customer interacts with and it runs
+         this package with DisplayInternalUI="no"; a second set of dialogs
+         underneath would only be reachable by running the MSI directly, which
+         is not a supported path (it would skip the Visual C++ prerequisite). -->
+
+    <!-- ActionText, not a dialog. Windows Installer forwards the running
+         action's description to whoever is driving it, so the bundle shows
+         these instead of a bare "Processing: Barcode Label Printing" for the
+         several minutes the configuration takes. Each line describes work that
+         is genuinely happening at that point — none of it is a placeholder, and
+         nothing here claims completion. The configuration step names its own
+         likely duration because that is the one that looks hung otherwise. -->
+    <UI>
+      <ProgressText Action="PreflightShutdown"
+                    Message="Closing Barcode Label Printing and stopping its service" />
+      <ProgressText Action="StopApiService"
+                    Message="Stopping the Barcode Label Printing API service" />
+      <ProgressText Action="Wix4CloseApplications_X64"
+                    Message="Checking that no Barcode Label Printing window is still open" />
+      <ProgressText Action="ConfigureSystem"
+                    Message="Configuring the database, API service and certificate — this can take several minutes" />
+      <ProgressText Action="RollbackSystem"
+                    Message="Undoing the services, certificate and firewall rule this installation created" />
+      <ProgressText Action="RemoveSystem"
+                    Message="Removing the API service, certificate and firewall rule" />
+    </UI>
+
+  </Package>
+</Wix>

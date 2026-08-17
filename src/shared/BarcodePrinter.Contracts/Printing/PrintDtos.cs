@@ -83,3 +83,18 @@ public sealed record PrintPreviewResponse(
     string Format,
     string? Unavailable,
     string? Warning = null);
+
+/// <summary>
+/// What a workstation reports about one of its own Windows queues.
+///
+/// The server cannot see a printer attached to somebody's PC, so "is this
+/// printer available?" can only be answered by that PC. Without this the server
+/// can only say whether the WORKSTATION is running — which is a different
+/// question, and answering it as though it were the printer's state shows a
+/// green light next to an unplugged printer.
+/// </summary>
+public sealed record WorkstationPrinterStatus(
+    string WindowsPrinterName, string Availability, string StatusText);
+
+public sealed record ReportLocalPrintersRequest(
+    string Workstation, IReadOnlyList<WorkstationPrinterStatus> Printers);

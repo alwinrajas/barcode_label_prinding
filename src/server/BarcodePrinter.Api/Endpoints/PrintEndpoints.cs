@@ -150,6 +150,17 @@ public static class PrintEndpoints
         // Live preview for the print screen.
         // Preview NEVER creates a print transaction: no job row, no carton
         // numbers, nothing enqueued (see LabelPreviewService).
+        // A workstation reporting its own Windows queues. Permission is
+        // PrintView: any operator's PC may report the printers it can see.
+        app.MapPost(ApiRoutes.Printers.LocalStatus, (
+                BarcodePrinter.Contracts.Printing.ReportLocalPrintersRequest request,
+                BarcodePrinter.Infrastructure.Printing.LocalPrinterStatusCache cache) =>
+            {
+                cache.Report(request.Workstation, request.Printers);
+                return Results.NoContent();
+            })
+            .RequirePermission(PermissionCodes.PrintView);
+
         group.MapPost("/preview", async (
                 PrintPreviewRequest request,
                 BarcodePrinter.Infrastructure.Printing.LabelPreviewService service,

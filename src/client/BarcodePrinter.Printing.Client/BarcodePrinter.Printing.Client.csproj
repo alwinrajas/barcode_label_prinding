@@ -1,12 +1,23 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net10.0-windows</TargetFramework>
+    <!-- System.Printing (queue enumeration and live queue status) ships in the
+         WPF framework assemblies. Nothing here renders UI; this is the API
+         Windows exposes for talking to the spooler. -->
+    <UseWPF>true</UseWPF>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="System.Drawing.Common" />
+    <PackageReference Include="System.Management" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\server\BarcodePrinter.Printing.Abstractions\BarcodePrinter.Printing.Abstractions.csproj" />
     <ProjectReference Include="..\BarcodePrinter.Client.Core\BarcodePrinter.Client.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Classify() is the decision that puts ZPL on a label printer and a
+         rendered page on a laser. It stays internal, but it is worth testing
+         directly rather than through a live spooler. -->
+    <InternalsVisibleTo Include="BarcodePrinter.Printing.Tests" />
   </ItemGroup>
 </Project>

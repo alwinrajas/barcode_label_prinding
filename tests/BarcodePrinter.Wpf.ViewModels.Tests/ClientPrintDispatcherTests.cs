@@ -79,7 +79,8 @@ public sealed class ClientPrintDispatcherTests
         var api = await handler.LoggedInClientAsync();
         var transport = new FakeTransport(outcome);
         await using var dispatcher = new ClientPrintDispatcher(
-            new PrintApi(api), [transport], NullLogger<ClientPrintDispatcher>.Instance);
+            new PrintApi(api), [transport], new NoPrintersProbe(),
+            NullLogger<ClientPrintDispatcher>.Instance);
 
         var finished = new TaskCompletionSource();
         dispatcher.JobCompleted += (_, _) => finished.TrySetResult();
@@ -159,8 +160,15 @@ public sealed class ClientPrintDispatcherTests
             new ConnectionStatus()));
 
         var dispatcher = new ClientPrintDispatcher(
-            api, [], NullLogger<ClientPrintDispatcher>.Instance);
+            api, [], new NoPrintersProbe(), NullLogger<ClientPrintDispatcher>.Instance);
 
         dispatcher.Workstation.Should().Be(Environment.MachineName);
+    }
+
+    /// <summary>These tests exercise job dispatch, not discovery: reporting
+    /// nothing keeps the status heartbeat out of the way.</summary>
+    private sealed class NoPrintersProbe : BarcodePrinter.Printing.Client.IWindowsPrinterProbe
+    {
+        public IReadOnlyList<BarcodePrinter.Printing.Client.DiscoveredPrinter> Discover() => [];
     }
 }

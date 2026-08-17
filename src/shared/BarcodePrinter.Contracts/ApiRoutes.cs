@@ -60,6 +60,10 @@ public static class ApiRoutes
         public static string SetDefault(long id) => $"/api/printers/{id}/default";
         public static string Test(long id) => $"/api/printers/{id}/test";
         public static string Status(long id) => $"/api/printers/{id}/status";
+
+        /// <summary>A workstation reporting the state of its own Windows queues
+        /// — the only place that knowledge exists.</summary>
+        public const string LocalStatus = "/api/printers/local-status";
     }
 
     public static class Print

@@ -24,6 +24,7 @@
         <Grid Grid.Column="0">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
 
@@ -40,7 +41,87 @@
                 </controls:PageHeader.Actions>
             </controls:PageHeader>
 
-            <Border Grid.Row="1" Style="{StaticResource Card}" Padding="0">
+            <!-- ═══ Printers Windows already has on this PC ═══
+                 The normal way to add a printer. The spooler knows the device,
+                 so nothing here asks for an address; the manual form below is
+                 only for devices Windows does not have. -->
+            <Border Grid.Row="1" Style="{StaticResource Card}" Margin="0,0,0,12"
+                    Visibility="{Binding HasDetected, Converter={StaticResource BoolToVisibility}}">
+                <StackPanel>
+                    <TextBlock Style="{StaticResource Text.H2}" Text="Available on this PC" />
+                    <TextBlock Style="{StaticResource Text.Caption}" Margin="0,2,0,10"
+                               Text="Printers installed in Windows on this workstation. Choose one to print from here — no address needed." />
+
+                    <ItemsControl ItemsSource="{Binding Detected}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Padding="12,10" Margin="0,0,0,6" CornerRadius="6"
+                                        Background="{StaticResource Surface.Sunken}">
+                                    <DockPanel LastChildFill="False">
+                                        <StackPanel DockPanel.Dock="Left">
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock Style="{StaticResource Text.Body}" FontWeight="SemiBold"
+                                                           Text="{Binding Name}" />
+                                                <Border Margin="8,0,0,0" Padding="6,1" CornerRadius="9"
+                                                        VerticalAlignment="Center"
+                                                        Background="{StaticResource Brush.Info.Soft}"
+                                                        Visibility="{Binding IsWindowsDefault, Converter={StaticResource BoolToVisibility}}">
+                                                    <TextBlock Style="{StaticResource Text.Caption}" Text="Windows default" />
+                                                </Border>
+                                                <Border Margin="8,0,0,0" Padding="6,1" CornerRadius="9"
+                                                        VerticalAlignment="Center"
+                                                        Background="{StaticResource Brush.Success.Soft}"
+                                                        Visibility="{Binding IsAppDefault, Converter={StaticResource BoolToVisibility}}">
+                                                    <TextBlock Style="{StaticResource Text.Caption}" Text="Used for printing" />
+                                                </Border>
+                                            </StackPanel>
+                                            <TextBlock Style="{StaticResource Text.Caption}" Margin="0,2,0,0"
+                                                       Text="{Binding Detail}" />
+                                        </StackPanel>
+
+                                        <!-- Status is stated, never turned into a
+                                             configuration task: offline now says
+                                             nothing about offline later. -->
+                                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal"
+                                                    VerticalAlignment="Center">
+                                            <TextBlock Style="{StaticResource Text.Caption}" VerticalAlignment="Center"
+                                                       Text="{Binding Connection}" Margin="0,0,12,0" />
+                                            <TextBlock VerticalAlignment="Center" Margin="0,0,12,0"
+                                                       Text="{Binding StatusText}">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock" BasedOn="{StaticResource Text.Caption}">
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsUnavailable}" Value="True">
+                                                                <Setter Property="Foreground" Value="{StaticResource Accent.Warning}" />
+                                                                <Setter Property="FontWeight" Value="SemiBold" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                            <Button Content="{Binding ActionText}" Height="30" Padding="12,0"
+                                                    Command="{Binding DataContext.UseDetectedCommand,
+                                                              RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                                    CommandParameter="{Binding}"
+                                                    IsEnabled="{Binding IsAppDefault, Converter={StaticResource InverseBool}}" />
+                                        </StackPanel>
+                                    </DockPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- Said plainly when Windows has nothing to offer, so the manual
+                 path below reads as the fallback rather than the only way. -->
+            <Border Grid.Row="1" Style="{StaticResource Card}" Margin="0,0,0,12"
+                    Visibility="{Binding DetectionMessage, Converter={StaticResource NullToCollapsed}}">
+                <TextBlock Style="{StaticResource Text.Caption}" TextWrapping="Wrap"
+                           Text="{Binding DetectionMessage}" />
+            </Border>
+
+            <Border Grid.Row="2" Style="{StaticResource Card}" Padding="0">
                 <Grid>
                     <DataGrid ItemsSource="{Binding Rows}" SelectedItem="{Binding SelectedRow}"
                               AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single">
